@@ -38,7 +38,6 @@ app.py               Streamlit app (UI, models, OCR)
 data/                Training data per crop (N, P, K, Yield)
 Images/              Crop photos used on the home page
 sample/SHC.jpg       Sample Soil Health Card for testing the OCR path
-docs/                Project report and presentation
 tests/               Smoke tests (pytest)
 requirements.txt     Runtime dependencies
 ```
