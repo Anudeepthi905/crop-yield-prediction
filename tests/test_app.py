@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import app
+import app as ui
+import core as app
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_FILE = str(ROOT / "app.py")
@@ -105,7 +106,7 @@ def test_pages_render_without_errors(page):
 def test_manual_input_prediction():
     at = new_app()
     at.sidebar.selectbox[0].select("Crop Yield Predictor").run()
-    at.radio[0].set_value(app.INPUT_MANUAL).run()
+    at.radio[0].set_value(ui.INPUT_MANUAL).run()
     at.number_input(key="npk_N").set_value(305.0)
     at.number_input(key="npk_P").set_value(36.0)
     at.number_input(key="npk_K").set_value(69.0)
@@ -126,7 +127,7 @@ def test_predict_without_values_shows_warning():
 def test_try_a_sample_fills_values_and_predicts():
     at = new_app()
     at.sidebar.selectbox[0].select("Crop Yield Predictor").run()
-    at.radio[0].set_value(app.INPUT_SAMPLE).run()
+    at.radio[0].set_value(ui.INPUT_SAMPLE).run()
     sample_select = next(s for s in at.selectbox if s.label == "Sample card")
     sample_select.select("Synthetic card B").run()
     next(b for b in at.button if b.label == "Try a sample").click().run()
