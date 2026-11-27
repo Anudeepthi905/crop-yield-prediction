@@ -40,5 +40,5 @@ elif mode == INPUT_MANUAL:
 st.subheader("2. Check the values")
 ui.npk_form()
 
-if st.session_state.get("result"):
-    ui.show_result(st.session_state["result"])
+st.subheader("3. Recommendation")
+ui.results_section()

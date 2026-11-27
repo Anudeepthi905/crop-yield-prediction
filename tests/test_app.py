@@ -104,40 +104,101 @@ def test_pages_render_without_errors(page):
     assert not at.exception
 
 
-def test_manual_input_prediction():
+def predict_page():
     at = new_app()
     at.switch_page(PAGE_FILES["Predict"]).run()
-    at.radio[0].set_value(ui.INPUT_MANUAL).run()
-    at.number_input(key="npk_N").set_value(305.0)
-    at.number_input(key="npk_P").set_value(36.0)
-    at.number_input(key="npk_K").set_value(69.0)
-    next(b for b in at.button if b.label == "Predict").click().run()
     assert not at.exception
-    assert "Suggested crop: **Maize**" in at.success[0].value
+    return at
 
 
-def test_predict_without_values_shows_warning():
-    at = new_app()
-    at.switch_page(PAGE_FILES["Predict"]).run()
-    next(b for b in at.button if b.label == "Predict").click().run()
+def click(at, label):
+    next(b for b in at.button if b.label == label).click().run()
     assert not at.exception
+
+
+def enter_values(at, n, p, k):
+    at.number_input(key="npk_N").set_value(n)
+    at.number_input(key="npk_P").set_value(p)
+    at.number_input(key="npk_K").set_value(k)
+
+
+def metrics(at):
+    return {m.label: m.value for m in at.metric}
+
+
+def load_sample(at, name):
+    at.radio(key="input_mode").set_value(ui.INPUT_SAMPLE).run()
+    next(s for s in at.selectbox if s.label == "Sample card").select(name).run()
+    click(at, "Load sample")
+
+
+def test_empty_state_before_first_prediction():
+    at = predict_page()
+    assert any("Your recommendation will appear here" in m.value for m in at.markdown)
+    assert not at.metric
+
+
+def test_all_zero_input_is_blocked():
+    at = predict_page()
+    click(at, "Predict")
     assert "Enter your soil test values first" in at.error[0].value
     assert "result" not in at.session_state
+    assert not at.metric
+
+
+def test_valid_prediction_shows_results_card():
+    at = predict_page()
+    at.radio(key="input_mode").set_value(ui.INPUT_MANUAL).run()
+    enter_values(at, 305.0, 36.0, 69.0)
+    click(at, "Predict")
+    shown = metrics(at)
+    assert shown["Crop"] == "Maize"
+    assert re.fullmatch(r"\d+\.\d{2}", shown["Estimated yield"])  # 2 decimals, no 15-digit float
+    assert any(label.startswith("Ahead of ") for label in shown)
+    assert any("Based on N 305.00, P 36.00 and K 69.00" in c.value for c in at.caption)
+    # Outside the training data (N > 277, K < 78): flagged, not blocked
+    assert any("Outside the training data" in c.value for c in at.caption)
+
+
+def test_result_survives_reruns_and_flags_changed_inputs(monkeypatch):
+    monkeypatch.setattr(ui, "read_npk_from_bytes", lambda image_bytes: {"N": 200.0, "P": 8.0, "K": 280.0})
+    at = predict_page()
+    at.radio(key="input_mode").set_value(ui.INPUT_MANUAL).run()
+    enter_values(at, 160.0, 20.0, 150.0)
+    click(at, "Predict")
+    assert metrics(at)["Crop"] == "Maize"
+    load_sample(at, "Synthetic card B")   # changes the form values, not the result
+    assert metrics(at)["Crop"] == "Maize"
+    assert any("changed since this result" in i.value for i in at.info)
+
+
+def test_ocr_failure_shows_recovery_button(monkeypatch):
+    monkeypatch.setattr(ui, "read_npk_from_bytes", lambda image_bytes: {})
+    at = predict_page()
+    load_sample(at, "Synthetic card A")
+    assert "couldn't find N, P and K" in at.error[0].value
+    click(at, "Type the values instead")
+    assert at.radio(key="input_mode").value == ui.INPUT_MANUAL
+
+
+def test_card_is_read_only_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ui, "read_npk_from_bytes",
+                        lambda image_bytes: calls.append(1) or {"N": 200.0, "P": 8.0, "K": 280.0})
+    at = predict_page()
+    load_sample(at, "Synthetic card B")
+    click(at, "Predict")                  # a rerun with the same card must not read it again
+    assert len(calls) == 1
+    assert metrics(at)["Crop"] == "Rice"
 
 
 @needs_tesseract
 def test_try_a_sample_fills_values_and_predicts():
-    at = new_app()
-    at.switch_page(PAGE_FILES["Predict"]).run()
-    at.radio[0].set_value(ui.INPUT_SAMPLE).run()
-    sample_select = next(s for s in at.selectbox if s.label == "Sample card")
-    sample_select.select("Synthetic card B").run()
-    next(b for b in at.button if b.label == "Load sample").click().run()
-    assert not at.exception
+    at = predict_page()
+    load_sample(at, "Synthetic card B")
     assert (at.number_input(key="npk_N").value, at.number_input(key="npk_P").value,
             at.number_input(key="npk_K").value) == (200.0, 8.0, 280.0)
     # The user can correct a value before predicting
     at.number_input(key="npk_P").set_value(18.0)
-    next(b for b in at.button if b.label == "Predict").click().run()
-    assert not at.exception
-    assert "Suggested crop: **Rice**" in at.success[-1].value
+    click(at, "Predict")
+    assert metrics(at)["Crop"] == "Rice"

@@ -1,4 +1,5 @@
 """Shared UI pieces for the Streamlit pages: copy, constants and components."""
+import altair as alt
 import pandas as pd
 import pytesseract
 import streamlit as st
@@ -11,7 +12,14 @@ FIELD_KEY = {key: f"npk_{key}" for key in NUTRIENTS}
 # the training data, so that gets a soft warning instead of a block.
 INPUT_MAX = {key: float(high) for key, (_, high) in PLAUSIBLE_RANGE.items()}
 
-YIELD_UNIT_NOTE = "Yields are in the units of the source dataset, which doesn't specify them."
+# The training data doesn't state the yield unit, so results are plain numbers. Set this one constant
+# (e.g. "q/ha") if the unit is confirmed, and every result and the chart will show it.
+YIELD_UNIT = ""
+YIELD_UNIT_NOTE = "The dataset doesn't state the yield unit."
+
+# Same colour as primaryColor in .streamlit/config.toml: used only for primary buttons and the winning result.
+BRAND_COLOR = "#2E7D32"
+MUTED_COLOR = "#C9CFC6"
 
 PAPER_URL = "https://doi.org/10.36287/setsci.17.1.0040"
 REPO_URL = "https://github.com/Anudeepthi905/crop-yield-prediction"
@@ -105,17 +113,64 @@ def _predict(values):
     st.session_state["result"] = {"inputs": values, "ranking": ranking}
 
 
-def show_result(result):
-    (best_crop, best_yield), *_ = result["ranking"]
-    st.subheader("Crop Suggestion and Yield Prediction")
-    st.success(f"Suggested crop: **{best_crop}**, estimated yield **{best_yield:.2f}**")
-    with st.expander("Estimated yield for every crop"):
-        st.dataframe(pd.DataFrame(result["ranking"], columns=["Crop", "Estimated yield"]).round(2),
-                     hide_index=True)
-    for note in outside_training(result["inputs"]):
-        st.caption(f"Outside the training data: {note}. Treat the prediction as a rough guide.")
-    st.caption(f"{YIELD_UNIT_NOTE} Estimates from models trained on a small academic dataset. "
-               "Not agronomic advice.")
+def fmt_yield(value):
+    return f"{value:.2f} {YIELD_UNIT}" if YIELD_UNIT else f"{value:.2f}"
+
+
+def results_section():
+    """Empty state before the first prediction, then the result card (kept across reruns)."""
+    result = st.session_state.get("result")
+    if not result:
+        with st.container(border=True):
+            st.markdown("**Your recommendation will appear here**")
+            st.caption("Add your soil values above and press **Predict**. You'll see the best crop for your "
+                       "soil, its estimated yield, and how all four crops compare.")
+        return
+    if current_inputs() != result["inputs"]:
+        st.info("The values above have changed since this result. Press **Predict** to update it.",
+                icon=":material/update:")
+    _result_card(result)
+
+
+def _result_card(result):
+    ranking = result["ranking"]
+    (best, best_yield), (runner_up, runner_up_yield) = ranking[0], ranking[1]
+    n, p, k = result["inputs"]
+    with st.container(border=True):
+        st.badge("Recommended crop", icon=":material/eco:", color="primary")
+        best_col, yield_col, lead_col = st.columns(3)
+        best_col.metric("Crop", best)
+        yield_col.metric("Estimated yield", fmt_yield(best_yield))
+        lead_col.metric(f"Ahead of {runner_up}", f"+{fmt_yield(best_yield - runner_up_yield)}",
+                        help=f"{runner_up} is next, at {fmt_yield(runner_up_yield)}.")
+        st.altair_chart(_ranking_chart(ranking), width="stretch",
+                        alt="Estimated yield for each crop: "
+                            + ", ".join(f"{crop} {fmt_yield(value)}" for crop, value in ranking))
+        st.caption(f"Based on N {n:.2f}, P {p:.2f} and K {k:.2f} kg/ha. {YIELD_UNIT_NOTE}")
+        for note in outside_training(result["inputs"]):
+            st.caption(f":material/warning: Outside the training data: {note}. Treat this as a rough guide.")
+        with st.expander("Exact values"):
+            table = pd.DataFrame(ranking, columns=["Crop", "Estimated yield"])
+            table.insert(0, "Rank", range(1, len(table) + 1))
+            st.dataframe(table, hide_index=True, column_config={
+                "Estimated yield": st.column_config.NumberColumn(format="%.2f")})
+
+
+def _ranking_chart(ranking):
+    """Horizontal bars, best first. The winner is in the brand colour AND labelled, so colour isn't the only cue."""
+    data = pd.DataFrame(ranking, columns=["Crop", "Yield"])
+    data["Label"] = [f"{crop} (recommended)" if i == 0 else crop for i, crop in enumerate(data["Crop"])]
+    data["Best"] = [i == 0 for i in range(len(data))]
+    data["Value"] = data["Yield"].map(fmt_yield)
+    base = alt.Chart(data).encode(
+        y=alt.Y("Label:N", sort=None, title=None,
+                axis=alt.Axis(labelLimit=220, labelFontSize=13, ticks=False, domain=False)),
+        x=alt.X("Yield:Q", title=None, axis=None))
+    bars = base.mark_bar(cornerRadiusEnd=4, height=22).encode(
+        color=alt.condition("datum.Best", alt.value(BRAND_COLOR), alt.value(MUTED_COLOR)),
+        tooltip=[alt.Tooltip("Crop:N"), alt.Tooltip("Value:N", title="Estimated yield")])
+    labels = base.mark_text(align="left", dx=6, fontSize=13).encode(text="Value:N")
+    return (bars + labels).properties(height=44 * len(data))
 
 
 def switch_to_manual():
