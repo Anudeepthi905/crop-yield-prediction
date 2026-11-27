@@ -1,0 +1,39 @@
+name: Card reader on Linux
+
+# Streamlit Community Cloud runs on Debian and installs Tesseract from packages.txt, which can read
+# some cards differently from Windows or macOS. This runs the reader benchmark and the tests there.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ocr:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - python:3.11-slim-bookworm    # Debian 12, Tesseract 5.3
+          - python:3.11-slim-bullseye    # Debian 11, Tesseract 4.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tesseract from packages.txt (as Streamlit Community Cloud does)
+        run: |
+          apt-get update
+          xargs -a packages.txt apt-get install -y --no-install-recommends
+          tesseract --version
+
+      - name: Install Python dependencies
+        run: pip install --no-cache-dir -r requirements.txt pytest==9.2.0
+
+      - name: Benchmark the card reader
+        run: python tools/ocr_benchmark.py --debug
+
+      - name: Unit tests
+        if: always()
+        run: pytest -q -p no:cacheprovider
