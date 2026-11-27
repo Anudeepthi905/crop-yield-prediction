@@ -154,24 +154,47 @@ MAX_UPSCALE = 4.0
 # Cards print values with two decimals ("69.00"); a reading in that form is trusted more.
 CARD_VALUE = re.compile(r"^\d{1,4}[.,]\d{2}$")
 DIGITS_ONLY = "--psm 7 -c tessedit_char_whitelist=0123456789."
+REREAD_DIGIT_HEIGHT = 48     # px: the cropped number is enlarged to about this height before re-reading
 # How much each kind of reading counts in the vote
-WEIGHT_LINE_TEXT, WEIGHT_LINE_TEXT_TWO_DECIMALS, WEIGHT_DIGIT_REREAD = 1, 2, 3
+WEIGHT_LINE_TEXT, WEIGHT_LINE_TEXT_TWO_DECIMALS, WEIGHT_DIGIT_CONFIRMATION, WEIGHT_TIE_BREAK = 1, 2, 3, 1
 
 
 def read_npk(img):
     """OCR a soil health card image (BGR numpy array). Returns a dict with any of "N", "P", "K".
 
-    Each value is read several ways (two image views, plus a digits-only re-read of the number
-    itself) and the readings vote, so a single misread digit can't win on its own. Values still
-    missing fall back to the original whole-text reader.
+    Each value is read from the line text in two image views, and the number itself is cropped and
+    re-read in digits-only mode. A re-read only *confirms* a value the line text also produced (on its
+    own, a cropped re-read can return garbage such as "8.00"). If the readings still tie (e.g. one
+    view says 69.00, the other 65.00), the earlier whole-text reader breaks the tie. A value with no
+    line reading falls back to a re-read that both binarizations agree on, then to the earlier reader.
     """
     configure_tesseract()
-    votes = {key: Counter() for key in NUTRIENT_LABELS}
+    line_votes = {key: Counter() for key in NUTRIENT_LABELS}
+    rereads = {key: Counter() for key in NUTRIENT_LABELS}
     for view in (_gray(_enlarge(img)), _without_table_lines(img)):
-        _vote(view, votes)
-    found = {key: counts.most_common(1)[0][0] for key, counts in votes.items() if counts}
+        _vote(view, line_votes, rereads)
+
+    fulltext = None
+    found = {}
+    for key in NUTRIENT_LABELS:
+        scores = Counter({value: weight + WEIGHT_DIGIT_CONFIRMATION * rereads[key][value]
+                          for value, weight in line_votes[key].items()})
+        if not scores:
+            agreed = [value for value, count in rereads[key].items() if count >= 2]
+            if len(agreed) == 1:
+                found[key] = agreed[0]
+            continue
+        ranked = scores.most_common()
+        if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:          # a tie: ask the earlier reader
+            fulltext = _read_npk_fulltext(img) if fulltext is None else fulltext
+            if fulltext.get(key) in scores:
+                scores[fulltext[key]] += WEIGHT_TIE_BREAK
+            ranked = scores.most_common()
+        found[key] = ranked[0][0]
+
     if len(found) < len(NUTRIENT_LABELS):
-        for key, value in _read_npk_fulltext(img).items():
+        fulltext = _read_npk_fulltext(img) if fulltext is None else fulltext
+        for key, value in fulltext.items():
             found.setdefault(key, value)
     return found
 
@@ -202,8 +225,8 @@ def _ocr_lines(view):
     return [sorted(words, key=lambda word: word[1]) for _, words in sorted(lines.items())]
 
 
-def _vote(view, votes):
-    """Add votes for each nutrient found in one view (a grayscale image)."""
+def _vote(view, line_votes, rereads):
+    """Collect, for one view (a grayscale image), the line-text readings and digit re-reads per nutrient."""
     for words in _ocr_lines(view):
         texts = [word[0] for word in words]
         for key, label in NUTRIENT_LABELS.items():
@@ -216,33 +239,42 @@ def _vote(view, votes):
                 value = float(f"{number.group(1)}.{number.group(2)}") if number.group(1) else float(number.group(3))
                 if _plausible(key, value):
                     two_decimals = CARD_VALUE.match(re.sub(r"\s", "", number.group(0)))
-                    votes[key][value] += WEIGHT_LINE_TEXT_TWO_DECIMALS if two_decimals else WEIGHT_LINE_TEXT
-            # Re-read just the number, digits only: catches single misread digits like 69 -> 65
+                    line_votes[key][value] += WEIGHT_LINE_TEXT_TWO_DECIMALS if two_decimals else WEIGHT_LINE_TEXT
+            # Re-read just the number, digits only, to confirm one of the line readings
             value_word = next((word for word in words[label_at + 1:]
                                if re.search(r"\d", word[0]) and not RANGE_PATTERN.search(word[0])), None)
             if value_word:
                 for reread in _reread_digits(view, value_word):
                     if _plausible(key, reread):
-                        votes[key][reread] += WEIGHT_DIGIT_REREAD
+                        rereads[key][reread] += 1
 
 
-def _reread_digits(gray, word):
-    """Crop the number part of an OCR word and read it again in digits-only mode, on two binarizations."""
+def _reread_digits(gray, word, raw=None):
+    """Crop the number part of an OCR word and read it again in digits-only mode, on two binarizations.
+
+    Returns the values read. If `raw` is a list, Tesseract's raw output is appended to it (for debugging).
+    """
     text, left, top, width, height = word
-    leading = re.match(r"[^\d]*([\d.,]+)", text)
+    leading = re.match(r"[^\d]*[\d.,]+", text)
     share = (leading.end() / len(text)) if leading else 1.0      # "69.00kg/ha": keep the "69.00" part
-    width = max(8, int(width * min(1.0, share + 0.1)))
-    pad = max(4, height // 3)
+    width = max(8, int(width * min(1.0, share + 0.05)))
+    pad = max(3, height // 4)
     crop = gray[max(0, top - pad):top + height + pad, max(0, left - pad):left + width + pad]
     if crop.size == 0:
         return []
-    crop = cv2.copyMakeBorder(crop, 12, 12, 12, 12, cv2.BORDER_REPLICATE)
+    factor = max(1.0, REREAD_DIGIT_HEIGHT / max(1, height))
+    if factor > 1.0:
+        crop = cv2.resize(crop, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC)
+    crop = cv2.copyMakeBorder(crop, 16, 16, 16, 16, cv2.BORDER_REPLICATE)
     binary = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     values = []
     for variant in (crop, binary):
-        reading = pytesseract.image_to_string(variant, lang="eng", config=DIGITS_ONLY).strip().replace(",", ".")
-        if CARD_VALUE.match(reading):
-            values.append(float(reading))
+        reading = pytesseract.image_to_string(variant, lang="eng", config=DIGITS_ONLY)
+        if raw is not None:
+            raw.append(reading.strip())
+        number = re.match(r"\s*(\d{1,4})[.,](\d{2})", reading)    # the value is at the start of the crop
+        if number:
+            values.append(float(f"{number.group(1)}.{number.group(2)}"))
     return values
 
 
