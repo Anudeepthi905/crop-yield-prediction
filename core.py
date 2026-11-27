@@ -1,10 +1,8 @@
-"""Model and OCR logic for the Crop Yield Predictor (no UI code).
-
-Moved verbatim from app.py; the Streamlit pages import from here.
-"""
+"""Model and OCR logic for the Crop Yield Predictor (no UI code). The Streamlit pages import from here."""
 import os
 import re
 import shutil
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -93,6 +91,8 @@ NUTRIENT_LABELS = {"N": r"Nitrogen", "P": r"Phosph\w*", "K": r"Potass\w*"}
 NUMBER_PATTERN = re.compile(r"(\d{1,4})(?:\s*[.,]\s*|\s)(\d{1,2})\b|(\d{1,4})")
 # Readings outside these ranges (kg/ha) are treated as OCR mistakes, e.g. "3600" for "36.00".
 PLAUSIBLE_RANGE = {"N": (1, 1500), "P": (0.1, 500), "K": (1, 2000)}
+# The card's "Normal Level" column holds ranges such as "120-280kg/ha"; a value is never taken from one.
+RANGE_PATTERN = re.compile(r"\d+(?:[.,]\d+)?\s*[-–~]\s*\d+(?:[.,]\d+)?")
 
 
 def parse_npk(text):
@@ -103,7 +103,7 @@ def parse_npk(text):
             label_match = re.search(label + r"[^\d\n]*", line, re.IGNORECASE)
             if not label_match:
                 continue
-            number = NUMBER_PATTERN.search(line, label_match.end())
+            number = NUMBER_PATTERN.search(RANGE_PATTERN.sub(" ", line[label_match.end():]))
             if not number:
                 continue
             if number.group(1):
@@ -147,13 +147,107 @@ def _without_table_lines(img):
     return 255 - ink
 
 
-def read_npk(img):
-    """OCR a soil health card image (BGR numpy array).
+# --- Voting reader -----------------------------------------------------------
+# Small screenshots are enlarged so text is about 30 px tall, where Tesseract is most accurate.
+TARGET_WIDTH = 1800
+MAX_UPSCALE = 4.0
+# Cards print values with two decimals ("69.00"); a reading in that form is trusted more.
+CARD_VALUE = re.compile(r"^\d{1,4}[.,]\d{2}$")
+DIGITS_ONLY = "--psm 7 -c tessedit_char_whitelist=0123456789."
+# How much each kind of reading counts in the vote
+WEIGHT_LINE_TEXT, WEIGHT_LINE_TEXT_TWO_DECIMALS, WEIGHT_DIGIT_REREAD = 1, 2, 3
 
-    Tries several views of the image and returns the first complete reading, otherwise the
-    values it could find (a dict with any of the keys "N", "P", "K").
+
+def read_npk(img):
+    """OCR a soil health card image (BGR numpy array). Returns a dict with any of "N", "P", "K".
+
+    Each value is read several ways (two image views, plus a digits-only re-read of the number
+    itself) and the readings vote, so a single misread digit can't win on its own. Values still
+    missing fall back to the original whole-text reader.
     """
     configure_tesseract()
+    votes = {key: Counter() for key in NUTRIENT_LABELS}
+    for view in (_gray(_enlarge(img)), _without_table_lines(img)):
+        _vote(view, votes)
+    found = {key: counts.most_common(1)[0][0] for key, counts in votes.items() if counts}
+    if len(found) < len(NUTRIENT_LABELS):
+        for key, value in _read_npk_fulltext(img).items():
+            found.setdefault(key, value)
+    return found
+
+
+def _enlarge(img):
+    factor = min(MAX_UPSCALE, max(1.0, TARGET_WIDTH / img.shape[1]))
+    return img if factor == 1.0 else cv2.resize(img, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC)
+
+
+def _gray(img):
+    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+
+
+def _plausible(key, value):
+    low, high = PLAUSIBLE_RANGE[key]
+    return low <= value <= high
+
+
+def _ocr_lines(view):
+    """OCR words grouped into lines, each a list of (text, left, top, width, height) in reading order."""
+    data = pytesseract.image_to_data(view, lang="eng", config="--psm 6", output_type=pytesseract.Output.DICT)
+    lines = {}
+    for i, text in enumerate(data["text"]):
+        if text.strip():
+            line_id = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+            lines.setdefault(line_id, []).append(
+                (text, data["left"][i], data["top"][i], data["width"][i], data["height"][i]))
+    return [sorted(words, key=lambda word: word[1]) for _, words in sorted(lines.items())]
+
+
+def _vote(view, votes):
+    """Add votes for each nutrient found in one view (a grayscale image)."""
+    for words in _ocr_lines(view):
+        texts = [word[0] for word in words]
+        for key, label in NUTRIENT_LABELS.items():
+            label_at = next((i for i, text in enumerate(texts) if re.search(label, text, re.IGNORECASE)), None)
+            if label_at is None:
+                continue
+            after_label = RANGE_PATTERN.sub(" ", " ".join(texts[label_at + 1:]))
+            number = NUMBER_PATTERN.search(after_label)
+            if number:
+                value = float(f"{number.group(1)}.{number.group(2)}") if number.group(1) else float(number.group(3))
+                if _plausible(key, value):
+                    two_decimals = CARD_VALUE.match(re.sub(r"\s", "", number.group(0)))
+                    votes[key][value] += WEIGHT_LINE_TEXT_TWO_DECIMALS if two_decimals else WEIGHT_LINE_TEXT
+            # Re-read just the number, digits only: catches single misread digits like 69 -> 65
+            value_word = next((word for word in words[label_at + 1:]
+                               if re.search(r"\d", word[0]) and not RANGE_PATTERN.search(word[0])), None)
+            if value_word:
+                for reread in _reread_digits(view, value_word):
+                    if _plausible(key, reread):
+                        votes[key][reread] += WEIGHT_DIGIT_REREAD
+
+
+def _reread_digits(gray, word):
+    """Crop the number part of an OCR word and read it again in digits-only mode, on two binarizations."""
+    text, left, top, width, height = word
+    leading = re.match(r"[^\d]*([\d.,]+)", text)
+    share = (leading.end() / len(text)) if leading else 1.0      # "69.00kg/ha": keep the "69.00" part
+    width = max(8, int(width * min(1.0, share + 0.1)))
+    pad = max(4, height // 3)
+    crop = gray[max(0, top - pad):top + height + pad, max(0, left - pad):left + width + pad]
+    if crop.size == 0:
+        return []
+    crop = cv2.copyMakeBorder(crop, 12, 12, 12, 12, cv2.BORDER_REPLICATE)
+    binary = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    values = []
+    for variant in (crop, binary):
+        reading = pytesseract.image_to_string(variant, lang="eng", config=DIGITS_ONLY).strip().replace(",", ".")
+        if CARD_VALUE.match(reading):
+            values.append(float(reading))
+    return values
+
+
+def _read_npk_fulltext(img):
+    """The earlier reader: whole-text OCR of three views; first complete reading, else what it found."""
     partial = {}
     views = (lambda: _table_region(img), lambda: _without_table_lines(img), lambda: img)
     for make_view in views:
