@@ -121,7 +121,8 @@ def test_predict_without_values_shows_warning():
     at.switch_page(PAGE_FILES["Predict"]).run()
     next(b for b in at.button if b.label == "Predict").click().run()
     assert not at.exception
-    assert "enter the N, P and K values" in at.warning[0].value
+    assert "Enter your soil test values first" in at.error[0].value
+    assert "result" not in at.session_state
 
 
 @needs_tesseract

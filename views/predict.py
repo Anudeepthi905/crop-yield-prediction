@@ -2,13 +2,13 @@
 import streamlit as st
 
 from core import ALLOWED_TYPES, MAX_UPLOAD_MB, SAMPLES, SAMPLES_DIR
-from ui import ABOUT_NOTE, INPUT_MANUAL, INPUT_SAMPLE, INPUT_UPLOAD, algo, fill_values_from_image
+import ui
+from ui import ABOUT_NOTE, INPUT_MANUAL, INPUT_SAMPLE, INPUT_UPLOAD, fill_values_from_image
 
 st.title("Crop Yield Predictor")
 st.info(ABOUT_NOTE)
 
-for key in ("npk_N", "npk_P", "npk_K"):
-    st.session_state.setdefault(key, 0.0)
+ui.init_state()
 
 st.subheader("1. Provide your soil's N, P and K values")
 option = st.radio("Input method", (INPUT_UPLOAD, INPUT_SAMPLE, INPUT_MANUAL), horizontal=True)
@@ -35,15 +35,8 @@ elif option == INPUT_SAMPLE:
     if active == choice:
         fill_values_from_image((SAMPLES_DIR / SAMPLES[active]).read_bytes(), f"sample:{active}")
 
-st.subheader("2. Check the values (kg/ha)")
-col_n, col_p, col_k = st.columns(3)
-n = col_n.number_input("Nitrogen (N)", min_value=0.0, max_value=10000.0, step=0.01, key="npk_N")
-p = col_p.number_input("Phosphorus (P)", min_value=0.0, max_value=10000.0, step=0.01, key="npk_P")
-k = col_k.number_input("Potassium (K)", min_value=0.0, max_value=10000.0, step=0.01, key="npk_K")
+st.subheader("2. Check the values")
+ui.npk_form()
 
-st.subheader("3. Predict")
-if st.button("Predict", type="primary"):
-    if n == 0 and p == 0 and k == 0:
-        st.warning("Please enter the N, P and K values first.")
-    else:
-        algo(n, p, k)
+if st.session_state.get("result"):
+    ui.show_result(st.session_state["result"])
