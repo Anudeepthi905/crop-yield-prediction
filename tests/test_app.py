@@ -9,11 +9,12 @@ import numpy as np
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import app as ui
+import ui
 import core as app
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_FILE = str(ROOT / "app.py")
+PAGE_FILES = {"Home": "views/home.py", "Predict": "views/predict.py", "About": "views/about.py"}
 
 # Expected N, P, K for each sample card in samples/
 EXPECTED_SAMPLE_NPK = {
@@ -83,7 +84,7 @@ def test_predict_yields_returns_all_crops():
 
 
 def test_all_referenced_files_exist():
-    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    source = (ROOT / "views" / "home.py").read_text(encoding="utf-8")
     images = re.findall(r'IMAGES_DIR / "([^"]+)"', source)
     assert images, "expected app.py to reference images"
     for name in images:
@@ -96,16 +97,16 @@ def test_all_referenced_files_exist():
 
 # --- UI ------------------------------------------------------------------------
 
-@pytest.mark.parametrize("page", ["Home", "Crop Yield Predictor", "About"])
+@pytest.mark.parametrize("page", list(PAGE_FILES))
 def test_pages_render_without_errors(page):
     at = new_app()
-    at.sidebar.selectbox[0].select(page).run()
+    at.switch_page(PAGE_FILES[page]).run()
     assert not at.exception
 
 
 def test_manual_input_prediction():
     at = new_app()
-    at.sidebar.selectbox[0].select("Crop Yield Predictor").run()
+    at.switch_page(PAGE_FILES["Predict"]).run()
     at.radio[0].set_value(ui.INPUT_MANUAL).run()
     at.number_input(key="npk_N").set_value(305.0)
     at.number_input(key="npk_P").set_value(36.0)
@@ -117,7 +118,7 @@ def test_manual_input_prediction():
 
 def test_predict_without_values_shows_warning():
     at = new_app()
-    at.sidebar.selectbox[0].select("Crop Yield Predictor").run()
+    at.switch_page(PAGE_FILES["Predict"]).run()
     next(b for b in at.button if b.label == "Predict").click().run()
     assert not at.exception
     assert "enter the N, P and K values" in at.warning[0].value
@@ -126,7 +127,7 @@ def test_predict_without_values_shows_warning():
 @needs_tesseract
 def test_try_a_sample_fills_values_and_predicts():
     at = new_app()
-    at.sidebar.selectbox[0].select("Crop Yield Predictor").run()
+    at.switch_page(PAGE_FILES["Predict"]).run()
     at.radio[0].set_value(ui.INPUT_SAMPLE).run()
     sample_select = next(s for s in at.selectbox if s.label == "Sample card")
     sample_select.select("Synthetic card B").run()
