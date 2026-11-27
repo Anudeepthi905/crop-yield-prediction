@@ -4,7 +4,7 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 
-from core import (CROP_MODELS, FEATURES, IMAGES_DIR, OCR_VERSION, PLAUSIBLE_RANGE, load_training_data, predict_yields,
+from core import (CROP_MODELS, FEATURES, OCR_VERSION, PLAUSIBLE_RANGE, load_training_data, predict_yields,
                   read_npk_from_bytes)
 
 NUTRIENTS = {"N": "Nitrogen", "P": "Phosphorus", "K": "Potassium"}
@@ -275,18 +275,18 @@ h2, h3 { word-break: normal !important; overflow-wrap: normal !important; }
 </style>"""
 
 
-# Phone menu. Below 768 px Streamlit folds the top navigation into a sidebar drawer opened by an
-# unlabelled "»" button, and the drawer stays open over the page after a link is chosen.
+# Phone menu. Below 768 px Streamlit folds the top navigation into a sidebar drawer opened by a
+# "»" button, and the drawer stays open over the page after a link is chosen.
 MENU_CSS = """<style>
-/* The drawer's open button becomes a labelled hamburger: three bars and "Menu". */
+/* The drawer's open button becomes a hamburger (three bars) in a 44 px square tap target.
+   Screen readers still get Streamlit's own label for it ("Expand sidebar"). */
 [data-testid="stExpandSidebarButton"] {
-  width: auto !important; min-height: 44px; padding: 0 0.85rem 0 0.75rem !important; gap: 0.6rem;
-  border-radius: 0.5rem; color: #1B1B1B !important; }
+  width: 44px !important; min-width: 44px; height: 44px; min-height: 44px; padding: 0 !important;
+  justify-content: center; align-items: center; border-radius: 0.5rem; color: #1B1B1B !important; }
 [data-testid="stExpandSidebarButton"] > span { display: none !important; }
 [data-testid="stExpandSidebarButton"]::before {
   content: ""; width: 20px; height: 2px; border-radius: 1px; background: currentColor;
   box-shadow: 0 -6px 0 currentColor, 0 6px 0 currentColor; }
-[data-testid="stExpandSidebarButton"]::after { content: "Menu"; font-size: 1rem; font-weight: 600; }
 /* The drawer's close button becomes an X. */
 [data-testid="stSidebarCollapseButton"] button { min-width: 44px; min-height: 44px; color: #1B1B1B !important; }
 [data-testid="stSidebarCollapseButton"] button > span { display: none !important; }
@@ -331,7 +331,6 @@ MENU_JS = """<script>
 def apply_styles():
     st.html(RESPONSIVE_CSS + MENU_CSS)
     st.html(MENU_JS, unsafe_allow_javascript=True)
-    st.logo(str(IMAGES_DIR / "logo.svg"), icon_image=str(IMAGES_DIR / "logo-mark.svg"), size="large")
 
 
 def switch_to_manual():

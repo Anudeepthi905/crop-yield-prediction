@@ -218,15 +218,19 @@ def wait_closed(page):
                            " return !s || s.getBoundingClientRect().right <= 1; }", timeout=10_000)
 
 
-def test_phone_menu_is_a_labelled_hamburger_that_closes_itself(server, browser):
+def test_phone_menu_is_a_hamburger_that_closes_itself(server, browser):
     page = open_page(browser, server, "phone", "/")
     try:
         button = page.get_by_test_id("stExpandSidebarButton")
+        # Wait for the menu styles: the hamburger is drawn by ::before (three bars via box-shadow)
         page.wait_for_function("() => { const b = document.querySelector('[data-testid=\"stExpandSidebarButton\"]');"
-                               " return b && getComputedStyle(b, '::after').content === '\"Menu\"'; }", timeout=10_000)
-        label = button.evaluate("e => getComputedStyle(e, '::after').content")
+                               " return b && getComputedStyle(b, '::before').boxShadow !== 'none'; }", timeout=10_000)
+        after = button.evaluate("e => getComputedStyle(e, '::after').content")
         size = button.evaluate("e => { const r = e.getBoundingClientRect(); return [r.width, r.height]; }")
-        assert label == '"Menu"' and size[1] >= 43.5, f"menu button label {label}, size {size}"
+        assert after in ("none", "normal"), f"the button should show only the hamburger, not a label ({after})"
+        assert size[0] >= 43.5 and size[1] >= 43.5, f"menu button is {size}, under 44 x 44 px"
+        assert button.get_attribute("aria-label"), "the button needs an accessible name for screen readers"
+        assert page.get_by_test_id("stSidebarLogo").count() == 0
         assert not menu_is_open(page)
 
         open_menu(page)                                    # choosing a page closes the drawer
