@@ -89,7 +89,3 @@ pytest
 ```
 
 The tests check OCR on `sample/SHC.jpg` (skipped if Tesseract isn't installed), run the models, render every page and run a manual-input prediction.
-
-## Team
-
-3rd Year CSD, Batch D11: K Anu Deepthi, Shreya A, U Sai Amogha, Siri Vennela B.
