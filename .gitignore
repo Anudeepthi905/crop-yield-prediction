@@ -21,8 +21,12 @@ env/
 Thumbs.db
 desktop.ini
 
-# Streamlit local secrets
+# Secrets (Streamlit local secrets/credentials, env files)
 .streamlit/secrets.toml
+.streamlit/credentials.toml
+.env
+.env.*
+*.log
 
 # Jupyter
 .ipynb_checkpoints/

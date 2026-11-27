@@ -1,0 +1,23 @@
+[theme]
+base = "light"
+# Brand green: used only for primary buttons and the winning result (ui.BRAND_COLOR matches it).
+primaryColor = "#2E7D32"
+backgroundColor = "#FFFFFF"
+# Neutral, so green stays reserved for what matters.
+secondaryBackgroundColor = "#F4F5F3"
+textColor = "#1B1B1B"
+borderColor = "#DDE1DB"
+baseRadius = "0.5rem"
+font = "sans serif"
+
+[server]
+# Largest upload Streamlit will accept, in MB (the app also checks this).
+maxUploadSize = 5
+
+[client]
+# Visitors see a generic message, never a traceback. Full details still go to the server log.
+# ("none" is the current setting; the old `false` is deprecated and still shows the stack trace.)
+showErrorDetails = "none"
+
+[browser]
+gatherUsageStats = false
