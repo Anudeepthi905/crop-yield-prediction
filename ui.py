@@ -24,9 +24,22 @@ ABOUT_NOTE = (
     "**estimates only** and not agronomic advice."
 )
 
-INPUT_UPLOAD = "Upload a Soil Health Card"
-INPUT_SAMPLE = "Try a sample card"
-INPUT_MANUAL = "Enter values manually"
+INPUT_UPLOAD = "Upload a card"
+INPUT_SAMPLE = "Try a sample"
+INPUT_MANUAL = "Type the values"
+INPUT_MODES = (INPUT_UPLOAD, INPUT_SAMPLE, INPUT_MANUAL)
+
+# What went wrong while reading a card, and how to fix it.
+OCR_PROBLEMS = {
+    "not_image": ("This file isn't a readable image.",
+                  "Upload a JPG or PNG photo or screenshot of the card."),
+    "no_values": ("We couldn't find N, P and K on this card.",
+                  "A sharp, straight-on photo of the \"Soil Test Results\" table, without glare, works best."),
+    "no_ocr": ("Card reading isn't available right now.",
+               "You can still type the values from the card."),
+    "failed": ("Something went wrong while reading the card.",
+               "Try another photo, or type the values in."),
+}
 
 
 @st.cache_data(show_spinner=False)
@@ -105,32 +118,60 @@ def show_result(result):
                "Not agronomic advice.")
 
 
-def fill_values_from_image(image_bytes, source_id):
-    """OCR the image, show it, and pre-fill the N/P/K inputs (once per new image)."""
+def switch_to_manual():
+    st.session_state["input_mode"] = INPUT_MANUAL
+
+
+def read_card(image_bytes, source_id, caption):
+    """Read N, P, K from a card image once per source, pre-fill the form, and show the outcome."""
+    record = st.session_state.get("ocr")
+    if not record or record["source"] != source_id:
+        with st.status("Reading the card...", expanded=False) as status:
+            record = _run_ocr(image_bytes, source_id)
+            st.session_state["ocr"] = record
+            for key, value in record["found"].items():
+                st.session_state[FIELD_KEY[key]] = value
+            if record["problem"]:
+                status.update(label="Couldn't read the card", state="error")
+            else:
+                status.update(label="Card read", state="complete")
+    _show_card_outcome(image_bytes, record, caption)
+
+
+def _run_ocr(image_bytes, source_id):
+    found, problem = {}, None
     try:
-        with st.spinner("Reading values from the card..."):
-            found = read_npk_from_bytes(image_bytes)
+        result = read_npk_from_bytes(image_bytes)
     except pytesseract.TesseractNotFoundError:
-        st.error("The OCR engine (Tesseract) isn't available here, so values can't be read from images. "
-                 "Please type them below.")
-        return
-    if found is None:
-        st.error("This file couldn't be opened as an image. Please upload a JPG or PNG photo or screenshot "
-                 "of the card, or type the values below.")
-        return
-    st.image(image_bytes, width=520)
-
-    if st.session_state.get("filled_from") != source_id:
-        for key, value in found.items():
-            st.session_state[f"npk_{key}"] = value
-        st.session_state["filled_from"] = source_id
-
-    names = {"N": "Nitrogen (N)", "P": "Phosphorus (P)", "K": "Potassium (K)"}
-    missing = [names[key] for key in names if key not in found]
-    if not missing:
-        st.success("Values read from the card. Please check them below and correct any mistakes.")
-    elif len(missing) < 3:
-        st.warning(f"Couldn't read {', '.join(missing)} from this image. Please type the missing values below.")
+        problem = "no_ocr"
+    except Exception:  # noqa: BLE001 - any OCR failure becomes a friendly message
+        problem = "failed"
     else:
-        st.warning("Couldn't read the values from this image. Try a clearer, straight-on photo of the "
-                   "\"Soil Test Results\" table, or type the values below.")
+        if result is None:
+            problem = "not_image"
+        elif not result:
+            problem = "no_values"
+        else:
+            found = result
+    return {"source": source_id, "found": found, "problem": problem}
+
+
+def _show_card_outcome(image_bytes, record, caption):
+    if record["problem"] == "not_image":
+        message_area = st.container()
+    else:
+        thumbnail, message_area = st.columns([1, 2], vertical_alignment="center")
+        thumbnail.image(image_bytes, caption=caption, width="stretch")
+    with message_area:
+        found = record["found"]
+        missing = [key for key in NUTRIENTS if key not in found]
+        if record["problem"]:
+            title, fix = OCR_PROBLEMS[record["problem"]]
+            st.error(f"**{title}** {fix}", icon=":material/error:")
+            st.button("Type the values instead", icon=":material/keyboard:", on_click=switch_to_manual)
+        elif missing:
+            st.warning(f"**Read {', '.join(found)}, but not {', '.join(missing)}.** Type the missing "
+                       f"value{'s' if len(missing) > 1 else ''} in the form below.", icon=":material/warning:")
+        else:
+            st.success("**Read N, P and K from the card.** Check them in the form below, then press Predict.",
+                       icon=":material/check_circle:")

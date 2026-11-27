@@ -132,7 +132,7 @@ def test_try_a_sample_fills_values_and_predicts():
     at.radio[0].set_value(ui.INPUT_SAMPLE).run()
     sample_select = next(s for s in at.selectbox if s.label == "Sample card")
     sample_select.select("Synthetic card B").run()
-    next(b for b in at.button if b.label == "Try a sample").click().run()
+    next(b for b in at.button if b.label == "Load sample").click().run()
     assert not at.exception
     assert (at.number_input(key="npk_N").value, at.number_input(key="npk_P").value,
             at.number_input(key="npk_K").value) == (200.0, 8.0, 280.0)
