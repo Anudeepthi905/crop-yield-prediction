@@ -20,8 +20,35 @@ from sklearn.svm import SVR
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 IMAGES_DIR = BASE_DIR / "Images"
+SAMPLES_DIR = BASE_DIR / "samples"
 
 DEFAULT_TESSERACT_WINDOWS = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# Upload limits (Streamlit's own hard limit is set in .streamlit/config.toml: server.maxUploadSize)
+ALLOWED_TYPES = ["jpg", "jpeg", "png"]
+MAX_UPLOAD_MB = 5
+
+# Sample cards visitors can try without uploading: label -> file in samples/
+SAMPLES = {
+    "Real card (full screenshot)": "sample_card_real_full.jpg",
+    "Real card (cropped to the soil test table)": "sample_card_real_cropped.jpg",
+    "Synthetic full card (results table + farmer details)": "sample_card_synthetic_full.png",
+    "Synthetic card A": "sample_card_synthetic_maize.png",
+    "Synthetic card B": "sample_card_synthetic_rice.png",
+}
+
+YIELD_UNIT_NOTE = "Yields are in the units of the source dataset, which doesn't specify them."
+
+PAPER_URL = "https://doi.org/10.36287/setsci.17.1.0040"
+REPO_URL = "https://github.com/Anudeepthi905/crop-yield-prediction"
+
+ABOUT_NOTE = (
+    "This app reads the **Nitrogen (N), Phosphorus (P) and Potassium (K)** values from a Soil Health Card "
+    "(or takes them typed in), predicts the yield of Rice, Maize, Groundnut and Redgram, and suggests the crop "
+    "with the highest predicted yield.\n\n"
+    "It is an **academic project**: the models were trained on a small dataset, so predictions are "
+    "**estimates only** and not agronomic advice."
+)
 
 
 def configure_tesseract():
@@ -39,13 +66,13 @@ def configure_tesseract():
 def home():
     st.markdown("<h1 style='color: green;'>Welcome to the Crop Suggestor and Yield Predictor</h1>",
                 unsafe_allow_html=True)
-    st.markdown(
-        "<p style='color: black;'>The aim is to build crop yield prediction model for a given historical data on NPK values and other environmental factors that affect crop yield, the goal is to develop a model that can accurately predict crop yield based on NPK values. The model should able to take into account the interactions between NPK values and provide accurate predictions for different regions and crop types.</p>",
-        unsafe_allow_html=True)
+    st.write(
+        "The aim is to build crop yield prediction model for a given historical data on NPK values and other environmental factors that affect crop yield, the goal is to develop a model that can accurately predict crop yield based on NPK values. The model should able to take into account the interactions between NPK values and provide accurate predictions for different regions and crop types.")
 
-    st.markdown(
-        "<p style='color: black;'>The site will take npk values as input. The user can enter these values manually or extract these values from the image uploaded. The model calculates yields based on npk values and whichever crop produces the highest yield is suggested to the user with the estimated yield in tons per hectare. The target user of the site our predominately Farmers, Agricultural Research Centers, etc.</p>",
-        unsafe_allow_html=True)
+    st.write(
+        "The site will take npk values as input. The user can enter these values manually or extract these values from the image uploaded. The model calculates yields based on npk values and whichever crop produces the highest yield is suggested to the user with the estimated yield. The target user of the site our predominately Farmers, Agricultural Research Centers, etc.")
+
+    st.info(ABOUT_NOTE)
 
     image1 = str(IMAGES_DIR / "rice.jpg")
     image2 = str(IMAGES_DIR / "maize.jpg")
@@ -91,12 +118,18 @@ CROP_MODELS = {
 }
 
 
+@st.cache_data
+def load_training_data(csv_name):
+    """Read one crop's training CSV from data/ (cached)."""
+    return pd.read_csv(DATA_DIR / csv_name)
+
+
 @st.cache_resource
 def load_models():
     """Train each crop's model once per server process (Streamlit caches the result)."""
     models = {}
     for crop, (csv_name, make_model, test_size, split_seed) in CROP_MODELS.items():
-        data = pd.read_csv(DATA_DIR / csv_name)
+        data = load_training_data(csv_name)
         X_train, _, y_train, _ = train_test_split(
             data[FEATURES], data['Yield'], test_size=test_size, random_state=split_seed)
         models[crop] = make_model().fit(X_train, y_train)
@@ -112,86 +145,201 @@ def predict_yields(n, p, k):
 def algo(n, p, k):
     py = predict_yields(n, p, k)
     best_crop, best_yield = max(py.items(), key=lambda item: item[1][0])
-    st.write("Crop Suggestion and Yield Prediction")
-    st.write(best_crop, best_yield[0], "kg/ha")
+    st.subheader("Crop Suggestion and Yield Prediction")
+    st.success(f"Suggested crop: **{best_crop}**, estimated yield **{best_yield[0]:.2f}**")
+    with st.expander("Estimated yield for every crop"):
+        table = pd.DataFrame(
+            {"Crop": list(py), "Estimated yield": [round(float(v[0]), 2) for v in py.values()]})
+        st.dataframe(table.sort_values(table.columns[1], ascending=False), hide_index=True)
+    st.caption(f"{YIELD_UNIT_NOTE} Estimates from models trained on a small academic dataset. "
+               "Not agronomic advice.")
 
 
-def extract_npk_from_image(img):
-    """OCR a soil health card image (BGR numpy array). Returns (n, p, k) floats, or None if not found."""
-    configure_tesseract()
-    # Calculate threshold and aspect ratio based on image size
-    img_size = img.shape[0] * img.shape[1]
-    threshold = int(0.01 * img_size)
-    aspect_ratio_range = (1.2, 2.5)
+# ---------------------------------------------------------------------------
+# OCR: read N, P, K from a Soil Health Card image
+# ---------------------------------------------------------------------------
+NUTRIENT_LABELS = {"N": r"Nitrogen", "P": r"Phosph\w*", "K": r"Potass\w*"}
+# Values are printed like "305.00". OCR sometimes turns the dot into "," or a space ("36 00").
+NUMBER_PATTERN = re.compile(r"(\d{1,4})(?:\s*[.,]\s*|\s)(\d{1,2})\b|(\d{1,4})")
+# Readings outside these ranges (kg/ha) are treated as OCR mistakes, e.g. "3600" for "36.00".
+PLAUSIBLE_RANGE = {"N": (1, 1500), "P": (0.1, 500), "K": (1, 2000)}
+
+
+def parse_npk(text):
+    """Find N, P and K values in OCR text. Returns a dict with the keys it found."""
+    found = {}
+    for key, label in NUTRIENT_LABELS.items():
+        for line in text.splitlines():
+            label_match = re.search(label + r"[^\d\n]*", line, re.IGNORECASE)
+            if not label_match:
+                continue
+            number = NUMBER_PATTERN.search(line, label_match.end())
+            if not number:
+                continue
+            if number.group(1):
+                value = float(f"{number.group(1)}.{number.group(2)}")
+            else:
+                value = float(number.group(3))
+            low, high = PLAUSIBLE_RANGE[key]
+            if low <= value <= high:
+                found[key] = value
+                break
+    return found
+
+
+def _ocr(image):
+    return pytesseract.image_to_string(image, lang="eng", config="--psm 6")
+
+
+def _table_region(img):
+    """The original approach: OCR the first large, table-shaped region of the image."""
+    threshold = int(0.01 * img.shape[0] * img.shape[1])
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Extract NPK values from contours using OCR
-    npk_values = ""
     for contour in contours:
-        area = cv2.contourArea(contour)
         x, y, w, h = cv2.boundingRect(contour)
-        aspect_ratio = float(w) / h
-        if area > threshold and aspect_ratio_range[0] < aspect_ratio < aspect_ratio_range[1]:
-            roi = img[y:y + h, x:x + w]
-            npk_values = pytesseract.image_to_string(roi, lang='eng', config='--psm 6')
-            if npk_values:
-                break
+        if cv2.contourArea(contour) > threshold and 1.2 < w / h < 2.5:
+            return img[y:y + h, x:x + w]
+    return None
 
-    if not npk_values:
+
+def _without_table_lines(img):
+    """Upscale, binarize and erase table grid lines, which otherwise confuse Tesseract."""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    horizontal = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, gray.shape[1] // 15), 1)))
+    vertical = cv2.morphologyEx(
+        ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(40, gray.shape[0] // 15))))
+    ink[(horizontal | vertical) > 0] = 0
+    return 255 - ink
+
+
+def read_npk(img):
+    """OCR a soil health card image (BGR numpy array).
+
+    Tries several views of the image and returns the first complete reading, otherwise the
+    values it could find (a dict with any of the keys "N", "P", "K").
+    """
+    configure_tesseract()
+    partial = {}
+    views = (lambda: _table_region(img), lambda: _without_table_lines(img), lambda: img)
+    for make_view in views:
+        view = make_view()
+        if view is None:
+            continue
+        found = parse_npk(_ocr(view))
+        if len(found) == 3:
+            return found
+        for key, value in found.items():
+            partial.setdefault(key, value)
+    return partial
+
+
+def extract_npk_from_image(img):
+    """Returns (n, p, k) floats if all three values were read, otherwise None."""
+    found = read_npk(img)
+    return (found["N"], found["P"], found["K"]) if len(found) == 3 else None
+
+
+@st.cache_data(show_spinner=False, max_entries=50)
+def read_npk_from_bytes(image_bytes):
+    """Decode image bytes and OCR them. Returns None if the bytes are not a readable image."""
+    img = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
         return None
-    # Extract decimal values for N, P, and K using regular expressions
-    npk_values = npk_values.strip()
-    n_match = re.search(r"Available Nitrogen \(N\) \| (\d+\.\d+)", npk_values)
-    p_match = re.search(r"Available Phosphorus \(P\)\| (\d+\.\d+)", npk_values)
-    k_match = re.search(r"Available Potassium \(K\) \| (\d+\.\d+)", npk_values)
-    if not (n_match and p_match and k_match):
-        return None
-    return float(n_match.group(1)), float(p_match.group(1)), float(k_match.group(1))
+    return read_npk(img)
+
+
+# ---------------------------------------------------------------------------
+# Predictor page
+# ---------------------------------------------------------------------------
+INPUT_UPLOAD = "Upload a Soil Health Card"
+INPUT_SAMPLE = "Try a sample card"
+INPUT_MANUAL = "Enter values manually"
+
+
+def fill_values_from_image(image_bytes, source_id):
+    """OCR the image, show it, and pre-fill the N/P/K inputs (once per new image)."""
+    try:
+        with st.spinner("Reading values from the card..."):
+            found = read_npk_from_bytes(image_bytes)
+    except pytesseract.TesseractNotFoundError:
+        st.error("The OCR engine (Tesseract) isn't available here, so values can't be read from images. "
+                 "Please type them below.")
+        return
+    if found is None:
+        st.error("This file couldn't be opened as an image. Please upload a JPG or PNG photo or screenshot "
+                 "of the card, or type the values below.")
+        return
+    st.image(image_bytes, width=520)
+
+    if st.session_state.get("filled_from") != source_id:
+        for key, value in found.items():
+            st.session_state[f"npk_{key}"] = value
+        st.session_state["filled_from"] = source_id
+
+    names = {"N": "Nitrogen (N)", "P": "Phosphorus (P)", "K": "Potassium (K)"}
+    missing = [names[key] for key in names if key not in found]
+    if not missing:
+        st.success("Values read from the card. Please check them below and correct any mistakes.")
+    elif len(missing) < 3:
+        st.warning(f"Couldn't read {', '.join(missing)} from this image. Please type the missing values below.")
+    else:
+        st.warning("Couldn't read the values from this image. Try a clearer, straight-on photo of the "
+                   "\"Soil Test Results\" table, or type the values below.")
 
 
 def upload():
     st.title("Crop Yield Predictor")
-    st.write("Please select an option to input soil data:")
+    st.info(ABOUT_NOTE)
 
-    option = st.radio("Input Method", ("Upload Soil Health Card Image", "Manual Input"))
+    for key in ("npk_N", "npk_P", "npk_K"):
+        st.session_state.setdefault(key, 0.0)
 
-    if option == "Upload Soil Health Card Image":
-        st.write("Please upload an image of your soil health card")
-        uploaded_file = st.file_uploader("Choose an image file", type=["jpg", "jpeg"])
+    st.subheader("1. Provide your soil's N, P and K values")
+    option = st.radio("Input method", (INPUT_UPLOAD, INPUT_SAMPLE, INPUT_MANUAL), horizontal=True)
+
+    if option == INPUT_UPLOAD:
+        uploaded_file = st.file_uploader(
+            "Photo or screenshot of the card's \"Soil Test Results\" table",
+            type=ALLOWED_TYPES, help=f"JPG or PNG, up to {MAX_UPLOAD_MB} MB.")
         if uploaded_file is not None:
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, 1)
-            if img is None:
-                st.warning("Could not read the uploaded file as an image. Please enter values manually.")
-                st.stop()
-            st.image(img, channels="BGR")
-            try:
-                npk = extract_npk_from_image(img)
-            except pytesseract.TesseractNotFoundError:
-                st.error("Tesseract OCR is not installed or not found. Install it or set TESSERACT_CMD, "
-                         "or use Manual Input.")
-                st.stop()
-            # If NPK values not found, ask user to input manually
-            if npk is None:
-                st.warning("Unable to extract values from Image please enter manually")
-                st.stop()
-            n, p, k = npk
-            algo(n, p, k)
+            if uploaded_file.size > MAX_UPLOAD_MB * 1024 * 1024:
+                st.error(f"That file is {uploaded_file.size / 2**20:.1f} MB. Please upload an image under "
+                         f"{MAX_UPLOAD_MB} MB.")
+            else:
+                image_bytes = uploaded_file.getvalue()
+                fill_values_from_image(image_bytes, f"upload:{uploaded_file.name}:{len(image_bytes)}")
 
-    elif option == "Manual Input":
-        st.write("Please enter the values of Nitrogen, Phosphorous, and Potassium below.")
-        n = st.number_input("Enter Nitrogen value", min_value=0.0, max_value=10000.0, value=0.0, step=0.01)
-        p = st.number_input("Enter Phosphorous value", min_value=0.0, max_value=10000.0, value=0.0, step=0.01)
-        k = st.number_input("Enter Potassium value", min_value=0.0, max_value=10000.0, value=0.0, step=0.01)
+    elif option == INPUT_SAMPLE:
+        st.caption("No card handy? Pick a sample: a real card (full or cropped) or one of three synthetic ones.")
+        choice = st.selectbox("Sample card", list(SAMPLES))
+        if st.button("Try a sample"):
+            st.session_state["active_sample"] = choice
+            st.session_state["filled_from"] = None  # re-fill the values even if this sample was used before
+        active = st.session_state.get("active_sample")
+        if active == choice:
+            fill_values_from_image((SAMPLES_DIR / SAMPLES[active]).read_bytes(), f"sample:{active}")
 
-        if st.button("Predict"):
+    st.subheader("2. Check the values (kg/ha)")
+    col_n, col_p, col_k = st.columns(3)
+    n = col_n.number_input("Nitrogen (N)", min_value=0.0, max_value=10000.0, step=0.01, key="npk_N")
+    p = col_p.number_input("Phosphorus (P)", min_value=0.0, max_value=10000.0, step=0.01, key="npk_P")
+    k = col_k.number_input("Potassium (K)", min_value=0.0, max_value=10000.0, step=0.01, key="npk_K")
+
+    st.subheader("3. Predict")
+    if st.button("Predict", type="primary"):
+        if n == 0 and p == 0 and k == 0:
+            st.warning("Please enter the N, P and K values first.")
+        else:
             algo(n, p, k)
 
 
 def about():
-    st.title("About us")
+    st.title("About")
 
     st.header("Motivation")
     st.write(
@@ -200,34 +348,19 @@ def about():
     st.header("Objectives")
     st.write(
         "Our objective is to develop a model that would accurately suggest crop and predict yield in order to help farmers take smart decisions in crop selection. We integrated the model to an easy to use interface .")
-    st.header("Group Members")
-    st.write("3rd Year CSD, Batch-D11")
-
-    members_container = st.container()
-
-    with members_container:
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.write("Name: K Anu deepthi")
-            st.write("Roll no: 20251A6712")
-
-        with col2:
-            st.write("Name: Shreya A")
-            st.write("Roll no: 20251A6727")
-
-        with col3:
-            st.write("Name: U Sai Amogha")
-            st.write("Roll no: 20251A6728")
-
-        with col4:
-            st.write("Name: Siri Vennela B")
-            st.write("Roll no: 20251A6731")
+    st.header("Background")
+    st.write(
+        "This project began in 2023 as a group academic project at GNITS with my classmates, which led to the "
+        f"published paper [*Crop Yield Prediction Using Machine Learning Algorithms*]({PAPER_URL}). I later "
+        "revisited it to polish the code, improve the image reading, add tests and put it online as a live app.")
+    st.write(f"Source code: {REPO_URL}")
 
 
 def main():
+    st.set_page_config(page_title="Crop Yield Predictor", page_icon="🌾", layout="wide")
     menu = ["Home", "Crop Yield Predictor", "About"]
     choice = st.sidebar.selectbox("Menu", menu)
+    st.sidebar.caption("Academic project. Predictions are estimates, not agronomic advice.")
 
     if choice == "Home":
         home()
