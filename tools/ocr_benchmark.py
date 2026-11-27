@@ -53,9 +53,11 @@ def debug(img):
                     continue
                 value_word = next((w for w in words[at + 1:]
                                    if re.search(r"\d", w[0]) and not core.RANGE_PATTERN.search(w[0])), None)
-                reread = core._reread_digits(view, value_word) if value_word else []
+                raw = []
+                reread = core._reread_digits(view, value_word, raw) if value_word else []
                 print(f"      {key}: line={line!r} value_word={value_word[0] if value_word else None!r} "
-                      f"digit_reread={reread}")
+                      f"digit_reread={reread} raw={raw}")
+    print(f"    [earlier whole-text reader] {core._read_npk_fulltext(img)}")
 
 
 def main():
