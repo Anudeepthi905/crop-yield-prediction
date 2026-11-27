@@ -172,6 +172,18 @@ def test_result_survives_reruns_and_flags_changed_inputs(monkeypatch):
     assert any("changed since this result" in i.value for i in at.info)
 
 
+def test_prediction_failure_shows_friendly_error(monkeypatch):
+    def broken(*values):
+        raise RuntimeError("model exploded")
+    monkeypatch.setattr(ui, "predict_cached", broken)
+    at = predict_page()
+    enter_values(at, 200.0, 30.0, 200.0)
+    click(at, "Predict")
+    assert "couldn't make a prediction" in at.error[0].value
+    assert "model exploded" not in at.error[0].value   # no internals leak to the visitor
+    assert not at.metric
+
+
 def test_ocr_failure_shows_recovery_button(monkeypatch):
     monkeypatch.setattr(ui, "read_npk_from_bytes", lambda image_bytes: {})
     at = predict_page()

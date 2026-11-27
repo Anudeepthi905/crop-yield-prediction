@@ -59,7 +59,7 @@ Requires **Python 3.11** and **Tesseract OCR** (only needed for reading images; 
    streamlit run app.py
    ```
 
-3. Open http://localhost:8501, choose **Crop Yield Predictor** in the sidebar, then **Try a sample card**.
+3. Open http://localhost:8501/predict, choose **Try a sample**, then **Load sample**.
 
 ### Tests
 
@@ -68,7 +68,19 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-The tests cover OCR on every sample card, value parsing, the models, every page of the UI, the sample button and a manual prediction. OCR tests are skipped if Tesseract isn't installed.
+The tests cover OCR on every sample card, value parsing and the models, plus the UI with Streamlit's `AppTest`: every page, the empty state, blocked all-zero input, the results card, results surviving reruns, a card being read only once, and friendly recovery when reading or predicting fails. OCR tests are skipped if Tesseract isn't installed.
+
+## UX decisions
+
+- **Real URLs.** Pages use `st.navigation`, so Home, Predict (`/predict`) and About (`/about`) can be linked to and the back button works.
+- **One form, no flicker.** N, P and K sit in one `st.form`: typing doesn't rerun the app, and Enter submits. Labels carry the unit (kg/ha) and help text gives the training range.
+- **Validate, don't guess.** All-zero input is blocked with an explanation. Values outside the training data still predict but are flagged as less reliable, because real cards often fall outside it.
+- **OCR is a suggestion, not a decision.** A card fills the same form, so people review the values before predicting. Each image is read once. If reading fails, the message says what went wrong, how to fix it, and offers a one-click switch to typing.
+- **A result with hierarchy.** The recommendation, its yield and its lead over the runner-up come first; a chart ranks all four crops; exact values sit in an expander. Numbers show 2 decimals.
+- **Results don't vanish.** The last result is kept across reruns, with a note if the inputs change after predicting.
+- **Every state is designed.** Empty, loading, partial-read and error states each have a message; visitors never see a traceback.
+- **Colour has one job.** Brand green marks only the primary action and the winning crop, which is also labelled "(recommended)", so colour is never the only cue.
+- **Honest units.** The dataset doesn't state the yield unit, so yields are plain numbers; the unit is one constant (`ui.YIELD_UNIT`) if it's ever confirmed.
 
 ## Deploy on Streamlit Community Cloud
 
@@ -88,7 +100,10 @@ The tests cover OCR on every sample card, value parsing, the models, every page 
 ## Project structure
 
 ```
-app.py                  Streamlit app (UI, OCR, models)
+app.py                  Entry point: page navigation and footer
+views/                  The pages: home.py, predict.py, about.py
+ui.py                   Shared UI: form, validation, card reading flow, results card, copy
+core.py                 Models and OCR (no UI code)
 data/                   Training data per crop (N, P, K, Yield)
 Images/                 Crop photos on the home page
 samples/                Sample Soil Health Cards for "Try a sample"
