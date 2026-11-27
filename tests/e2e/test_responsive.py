@@ -7,7 +7,7 @@ result is scrolled into view and focused; from 1024 px inputs and result sit sid
 Not part of the default run (they need a browser):
     pip install -r requirements-dev.txt && playwright install chromium
     pytest -m e2e
-    SAVE_SCREENSHOTS=1 pytest -m e2e      # also refreshes docs/screenshots/
+    SAVE_SCREENSHOTS=1 pytest -m e2e      # also saves screenshots to docs/screenshots/ (not committed)
 """
 import os
 import socket
