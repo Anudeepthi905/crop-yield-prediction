@@ -4,7 +4,7 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 
-from core import (CROP_MODELS, FEATURES, OCR_VERSION, PLAUSIBLE_RANGE, load_training_data, predict_yields,
+from core import (CROP_MODELS, FEATURES, IMAGES_DIR, OCR_VERSION, PLAUSIBLE_RANGE, load_training_data, predict_yields,
                   read_npk_from_bytes)
 
 NUTRIENTS = {"N": "Nitrogen", "P": "Phosphorus", "K": "Potassium"}
@@ -181,14 +181,20 @@ def _bring_into_view():
     st.html("""<script>
 (() => {
   let tries = 0;
+  const oneColumn = () => window.innerWidth < 1024;
   const go = () => {
     const card = document.querySelector('.st-key-result_card');
-    if (!card) { if (tries++ < 40) setTimeout(go, 50); return; }
+    if (!card) { if (tries++ < 120) setTimeout(go, 50); return; }      // wait up to ~6 s for the card
     card.setAttribute('tabindex', '-1');
     card.setAttribute('role', 'region');
     card.setAttribute('aria-label', 'Recommendation');
-    if (window.innerWidth < 1024) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+    if (oneColumn()) card.scrollIntoView({behavior: 'smooth', block: 'start'});
     card.focus({preventScroll: true});
+    // Content can still be laying out (the chart renders a moment later); check again and correct.
+    [700, 1500].forEach((delay) => setTimeout(() => {
+      const top = card.getBoundingClientRect().top;
+      if (oneColumn() && (top < -8 || top > window.innerHeight * 0.4)) card.scrollIntoView({block: 'start'});
+    }, delay));
   };
   go();
 })();
@@ -269,8 +275,63 @@ h2, h3 { word-break: normal !important; overflow-wrap: normal !important; }
 </style>"""
 
 
+# Phone menu. Below 768 px Streamlit folds the top navigation into a sidebar drawer opened by an
+# unlabelled "»" button, and the drawer stays open over the page after a link is chosen.
+MENU_CSS = """<style>
+/* The drawer's open button becomes a labelled hamburger: three bars and "Menu". */
+[data-testid="stExpandSidebarButton"] {
+  width: auto !important; min-height: 44px; padding: 0 0.85rem 0 0.75rem !important; gap: 0.6rem;
+  border-radius: 0.5rem; color: #1B1B1B !important; }
+[data-testid="stExpandSidebarButton"] > span { display: none !important; }
+[data-testid="stExpandSidebarButton"]::before {
+  content: ""; width: 20px; height: 2px; border-radius: 1px; background: currentColor;
+  box-shadow: 0 -6px 0 currentColor, 0 6px 0 currentColor; }
+[data-testid="stExpandSidebarButton"]::after { content: "Menu"; font-size: 1rem; font-weight: 600; }
+/* The drawer's close button becomes an X. */
+[data-testid="stSidebarCollapseButton"] button { min-width: 44px; min-height: 44px; color: #1B1B1B !important; }
+[data-testid="stSidebarCollapseButton"] button > span { display: none !important; }
+[data-testid="stSidebarCollapseButton"] button::before { content: "\\2715"; font-size: 1.25rem; line-height: 1; }
+/* While the drawer is open (its "Menu" button is gone), dim the page behind it. */
+@media (max-width: 767.98px) {
+  [data-testid="stApp"]:not(:has([data-testid="stExpandSidebarButton"])) [data-testid="stSidebar"] {
+    box-shadow: 0 0 0 100vmax rgba(20, 26, 20, 0.4); }
+}
+/* Menu links: full-width rows with room to tap. */
+[data-testid="stSidebarNavLink"] { min-height: 48px; padding-left: 0.75rem; }
+[data-testid="stSidebarNavLink"] span { font-size: 1.05rem; }
+</style>"""
+
+# Closes the drawer after a link is chosen, on a tap outside it, or on Escape (narrow screens only).
+# Static script, installed once per browser tab.
+MENU_JS = """<script>
+(() => {
+  if (window.__cropMenuInstalled) return;
+  window.__cropMenuInstalled = true;
+  const sidebar = () => document.querySelector('[data-testid="stSidebar"]');
+  const isOpen = () => {
+    const el = sidebar();
+    if (!el || window.innerWidth >= 768) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.right > 1;
+  };
+  const close = () => {
+    const btn = document.querySelector('[data-testid="stSidebarCollapseButton"] button');
+    if (btn && isOpen()) btn.click();
+  };
+  document.addEventListener('click', (event) => {
+    if (!isOpen()) return;
+    if (event.target.closest('[data-testid="stSidebarNavLink"]')) { setTimeout(close, 60); return; }
+    if (!event.target.closest('[data-testid="stSidebar"], [data-testid="stExpandSidebarButton"]')) close();
+  }, true);
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+})();
+</script>"""
+
+
 def apply_styles():
-    st.html(RESPONSIVE_CSS)
+    st.html(RESPONSIVE_CSS + MENU_CSS)
+    st.html(MENU_JS, unsafe_allow_javascript=True)
+    st.logo(str(IMAGES_DIR / "logo.svg"), icon_image=str(IMAGES_DIR / "logo-mark.svg"), size="large")
 
 
 def switch_to_manual():
