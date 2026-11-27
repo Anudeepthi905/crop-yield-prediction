@@ -125,7 +125,7 @@ def predict(page, n=305, p=36, k=69):
         page.locator(f'input[aria-label="{FIELDS[key]}"]').fill(str(value))
     page.get_by_role("button", name="Predict").click()
     page.locator(".st-key-result_card [data-testid=stMetricValue]").first.wait_for(timeout=60_000)
-    page.wait_for_timeout(1500)          # smooth scroll and focus finish
+    page.wait_for_timeout(2200)          # smooth scroll, focus and the position re-check finish
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -196,5 +196,60 @@ def test_tablet_is_one_column(server, browser):
         form_bottom = page.evaluate("() => document.querySelector('[data-testid=stForm]').getBoundingClientRect().bottom")
         card_top = page.evaluate("() => document.querySelector('.st-key-result_card').getBoundingClientRect().top")
         assert card_top > form_bottom, "below 1024 px the result should sit under the inputs"
+    finally:
+        page.close()
+
+
+# --- Phone menu ----------------------------------------------------------------
+
+def menu_is_open(page):
+    return page.evaluate("""() => { const s = document.querySelector('[data-testid="stSidebar"]');
+        if (!s) return false; const r = s.getBoundingClientRect(); return r.width > 0 && r.right > 1; }""")
+
+
+def open_menu(page):
+    page.get_by_test_id("stExpandSidebarButton").click()
+    page.wait_for_function("() => { const s = document.querySelector('[data-testid=\"stSidebar\"]');"
+                           " return s && s.getBoundingClientRect().right > 1; }", timeout=10_000)
+
+
+def wait_closed(page):
+    page.wait_for_function("() => { const s = document.querySelector('[data-testid=\"stSidebar\"]');"
+                           " return !s || s.getBoundingClientRect().right <= 1; }", timeout=10_000)
+
+
+def test_phone_menu_is_a_labelled_hamburger_that_closes_itself(server, browser):
+    page = open_page(browser, server, "phone", "/")
+    try:
+        button = page.get_by_test_id("stExpandSidebarButton")
+        page.wait_for_function("() => { const b = document.querySelector('[data-testid=\"stExpandSidebarButton\"]');"
+                               " return b && getComputedStyle(b, '::after').content === '\"Menu\"'; }", timeout=10_000)
+        label = button.evaluate("e => getComputedStyle(e, '::after').content")
+        size = button.evaluate("e => { const r = e.getBoundingClientRect(); return [r.width, r.height]; }")
+        assert label == '"Menu"' and size[1] >= 43.5, f"menu button label {label}, size {size}"
+        assert not menu_is_open(page)
+
+        open_menu(page)                                    # choosing a page closes the drawer
+        page.get_by_test_id("stSidebarNavLink").filter(has_text="Predict").click()
+        page.wait_for_url("**/predict", timeout=30_000)
+        wait_closed(page)
+
+        open_menu(page)                                    # Escape closes it
+        page.keyboard.press("Escape")
+        wait_closed(page)
+
+        open_menu(page)                                    # a tap outside closes it
+        page.mouse.click(DEVICES["phone"][0] - 20, DEVICES["phone"][1] // 2)
+        wait_closed(page)
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("device", ["tablet", "desktop"])
+def test_wider_screens_show_the_top_navigation(server, browser, device):
+    page = open_page(browser, server, device, "/")
+    try:
+        assert page.get_by_test_id("stExpandSidebarButton").count() == 0
+        assert page.get_by_role("link", name="Predict").first.is_visible()
     finally:
         page.close()
