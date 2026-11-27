@@ -59,11 +59,31 @@ def test_ocr_reads_sample_cards(filename, expected):
     assert app.extract_npk_from_image(load_image(app.SAMPLES_DIR / filename)) == expected
 
 
+@needs_tesseract
+@pytest.mark.parametrize("filename,expected", EXPECTED_SAMPLE_NPK.items())
+def test_ocr_reads_enlarged_photos(filename, expected):
+    """Phone photos come at other resolutions; a larger image must read the same values."""
+    img = cv2.resize(load_image(app.SAMPLES_DIR / filename), None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+    assert app.extract_npk_from_image(img) == expected
+
+
+@needs_tesseract
+def test_ocr_small_screenshot_never_guesses_wrong():
+    """A shrunken card may lose a value, but must never return a wrong one (e.g. 120 from '120-280')."""
+    img = load_image(app.SAMPLES_DIR / "sample_card_real_cropped.jpg")
+    small = cv2.resize(img, None, fx=0.75, fy=0.75, interpolation=cv2.INTER_AREA)
+    found = app.read_npk(small)
+    assert all(found[key] == value for key, value in {"N": 305.0, "P": 36.0, "K": 69.0}.items() if key in found)
+    assert len(found) >= 2
+
+
 @pytest.mark.parametrize("text,expected", [
     ("4 [Available Nitrogen (N) | 305.00 kg/ha", {"N": 305.0}),
     ("5 Available Phosphorus (P)| 36 00;kgiha High", {"P": 36.0}),   # dot read as a space
     ("6 Available Potassium (K) | 69,00 kg/ha", {"K": 69.0}),         # dot read as a comma
     ("5 Available Phosphorus (P) | 3600 kg/ha", {}),                  # implausible: rejected
+    ("6 Available Potassium (K) | 69.00ikg/ha 120-280kgha", {"K": 69.0}),
+    ("6 Available Potassium (K) | ikgha Low 120-280kg/ha", {}),        # value unreadable: never take the range
     ("Soil Test Results", {}),
 ])
 def test_parse_npk(text, expected):
