@@ -1,44 +1,56 @@
-"""Predict page: get N, P, K values and show the recommendation."""
+"""Predict page: get N, P, K values and show the recommendation.
+
+From 1024 px wide, inputs sit on the left and the result on the right (kept in view while scrolling);
+below that, everything is one column and the result is scrolled into view after Predict.
+"""
 import streamlit as st
 
 import ui
 from core import ALLOWED_TYPES, MAX_UPLOAD_MB, SAMPLES, SAMPLES_DIR
 from ui import INPUT_MANUAL, INPUT_MODES, INPUT_SAMPLE, INPUT_UPLOAD
 
+st.set_page_config(layout="wide")   # room for two columns; ui.RESPONSIVE_CSS caps the width
+
 st.title("Get a crop recommendation")
 st.caption("Add your soil's N, P and K values, check them, then press Predict.")
 
 ui.init_state()
 
-st.subheader("1. Add your soil values")
-mode = st.radio("How do you want to add your soil values?", INPUT_MODES, key="input_mode", horizontal=True)
+with st.container(key="predict_layout"):
+    inputs, results = st.columns([6, 5], gap="large")
 
-if mode == INPUT_UPLOAD:
-    uploaded_file = st.file_uploader(
-        "Soil Health Card photo or screenshot", type=ALLOWED_TYPES,
-        help=f"JPG or PNG, up to {MAX_UPLOAD_MB} MB. A straight-on photo of the \"Soil Test Results\" table "
-             "works best.")
-    if uploaded_file is not None:
-        if uploaded_file.size > MAX_UPLOAD_MB * 1024 * 1024:
-            st.error(f"**That file is {uploaded_file.size / 2**20:.1f} MB.** Upload an image under "
-                     f"{MAX_UPLOAD_MB} MB, for example a screenshot of the card.", icon=":material/error:")
-        else:
-            ui.read_card(uploaded_file.getvalue(), f"upload:{uploaded_file.file_id}", uploaded_file.name)
+with inputs:
+    st.subheader("1. Add your soil values")
+    mode = st.radio("How do you want to add your soil values?", INPUT_MODES, key="input_mode", horizontal=True)
 
-elif mode == INPUT_SAMPLE:
-    choice = st.selectbox("Sample card", list(SAMPLES),
-                          help="One real card (full and cropped) and three synthetic ones.")
-    if st.button("Load sample", icon=":material/upload_file:"):
-        st.session_state["active_sample"] = choice
-        st.session_state["ocr"] = None  # read again, so the form is re-filled even for the same sample
-    if st.session_state.get("active_sample") == choice:
-        ui.read_card((SAMPLES_DIR / SAMPLES[choice]).read_bytes(), f"sample:{choice}", choice)
+    if mode == INPUT_UPLOAD:
+        uploaded_file = st.file_uploader(
+            "Soil Health Card photo or screenshot", type=ALLOWED_TYPES,
+            help=f"JPG or PNG, up to {MAX_UPLOAD_MB} MB. A straight-on photo of the \"Soil Test Results\" table "
+                 "works best.")
+        if uploaded_file is not None:
+            if uploaded_file.size > MAX_UPLOAD_MB * 1024 * 1024:
+                st.error(f"**That file is {uploaded_file.size / 2**20:.1f} MB.** Upload an image under "
+                         f"{MAX_UPLOAD_MB} MB, for example a screenshot of the card.", icon=":material/error:")
+            else:
+                ui.read_card(uploaded_file.getvalue(), f"upload:{uploaded_file.file_id}", uploaded_file.name)
 
-elif mode == INPUT_MANUAL:
-    st.caption("Type the values from the \"Soil Test Results\" table on your Soil Health Card.")
+    elif mode == INPUT_SAMPLE:
+        choice = st.selectbox("Sample card", list(SAMPLES),
+                              help="One real card (full and cropped) and three synthetic ones.")
+        if st.button("Load sample", icon=":material/upload_file:"):
+            st.session_state["active_sample"] = choice
+            st.session_state["ocr"] = None  # read again, so the form is re-filled even for the same sample
+        if st.session_state.get("active_sample") == choice:
+            ui.read_card((SAMPLES_DIR / SAMPLES[choice]).read_bytes(), f"sample:{choice}", choice)
 
-st.subheader("2. Check the values")
-ui.npk_form()
+    elif mode == INPUT_MANUAL:
+        st.caption("Type the values from the \"Soil Test Results\" table on your Soil Health Card.")
 
-st.subheader("3. Recommendation")
-ui.results_section()
+    st.subheader("2. Check the values")
+    ui.npk_form()
+
+with results:
+    with st.container(key="predict_result"):
+        st.subheader("3. Recommendation")
+        ui.results_section()

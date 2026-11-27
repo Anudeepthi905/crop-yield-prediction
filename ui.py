@@ -70,7 +70,7 @@ def outside_training(values):
     notes = []
     for (key, (low, high)), value in zip(training_ranges().items(), values):
         if not low <= value <= high:
-            notes.append(f"{key} = {value:g} (trained on {low:g}–{high:g})")
+            notes.append(f"{key} {value:g} (trained on {low:g}–{high:g})")
     return notes
 
 
@@ -103,6 +103,7 @@ def _predict(values):
                  "reload the page.", icon=":material/error:")
         return
     st.session_state["result"] = {"inputs": values, "ranking": ranking}
+    st.session_state["show_result"] = True   # scroll to / focus the new result once (see _bring_into_view)
 
 
 def fmt_yield(value):
@@ -115,23 +116,26 @@ def results_section():
     if not result:
         with st.container(border=True):
             st.markdown("**Your recommendation will appear here**")
-            st.caption("Add your soil values above and press **Predict**. You'll see the best crop for your "
+            st.caption("Add your soil values and press **Predict**. You'll see the best crop for your "
                        "soil, its estimated yield, and how all four crops compare.")
         return
-    if current_inputs() != result["inputs"]:
-        st.info("The values above have changed since this result. Press **Predict** to update it.",
+    stale = current_inputs() != result["inputs"]
+    if stale:
+        st.info("The values have changed since this result. Press **Predict** to update it.",
                 icon=":material/update:")
-    _result_card(result)
+    _result_card(result, stale)
+    if st.session_state.pop("show_result", False):
+        _bring_into_view()
 
 
-def _result_card(result):
+def _result_card(result, stale=False):
     ranking = result["ranking"]
     (best, best_yield), (runner_up, runner_up_yield) = ranking[0], ranking[1]
     n, p, k = result["inputs"]
-    with st.container(border=True):
-        st.badge("Recommended crop", icon=":material/eco:", color="primary")
+    # A result for old inputs is faded (CSS on the key) so it can't be mistaken for the current one.
+    with st.container(border=True, key="result_card_stale" if stale else "result_card"):
         best_col, yield_col, lead_col = st.columns(3)
-        best_col.metric("Crop", best)
+        best_col.metric("Recommended crop", best)
         yield_col.metric("Estimated yield", fmt_yield(best_yield))
         lead_col.metric(f"Ahead of {runner_up}", f"+{fmt_yield(best_yield - runner_up_yield)}",
                         help=f"{runner_up} is next, at {fmt_yield(runner_up_yield)}.")
@@ -139,8 +143,10 @@ def _result_card(result):
                         alt="Estimated yield for each crop: "
                             + ", ".join(f"{crop} {fmt_yield(value)}" for crop, value in ranking))
         st.caption(f"Based on N {n:.2f}, P {p:.2f} and K {k:.2f} kg/ha. {YIELD_UNIT_NOTE}")
-        for note in outside_training(result["inputs"]):
-            st.caption(f":material/warning: Outside the training data: {note}. Treat this as a rough guide.")
+        notes = outside_training(result["inputs"])
+        if notes:
+            st.caption(f":material/info: Beyond the training data for {', '.join(notes)}, so this estimate is "
+                       "less certain.")
         with st.expander("Exact values"):
             table = pd.DataFrame(ranking, columns=["Crop", "Estimated yield"])
             table.insert(0, "Rank", range(1, len(table) + 1))
@@ -163,6 +169,107 @@ def _ranking_chart(ranking):
         tooltip=[alt.Tooltip("Crop:N"), alt.Tooltip("Value:N", title="Estimated yield")])
     labels = base.mark_text(align="left", dx=6, fontSize=13).encode(text="Value:N")
     return (bars + labels).properties(height=44 * len(data))
+
+
+def _bring_into_view():
+    """After Predict: on one-column layouts, scroll the result card into view; always move focus to it.
+
+    Without this, on a phone the result appears below the fold and people press Predict again.
+    The script is static (no user input in it); it runs only on the rerun right after a prediction.
+    """
+    st.html("""<script>
+(() => {
+  let tries = 0;
+  const go = () => {
+    const card = document.querySelector('.st-key-result_card');
+    if (!card) { if (tries++ < 40) setTimeout(go, 50); return; }
+    card.setAttribute('tabindex', '-1');
+    card.setAttribute('role', 'region');
+    card.setAttribute('aria-label', 'Recommendation');
+    if (window.innerWidth < 1024) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+    card.focus({preventScroll: true});
+  };
+  go();
+})();
+</script>""", unsafe_allow_javascript=True)
+
+
+# ---------------------------------------------------------------------------
+# Responsive and accessibility styles
+# ---------------------------------------------------------------------------
+# Streamlit doesn't expose these controls, so they're set here, in one place. Selectors use only
+# Streamlit's data-testid attributes and the .st-key-<key> classes of containers this app names
+# (checked against Streamlit 1.67; tests/e2e/test_responsive.py catches regressions).
+RESPONSIVE_CSS = """<style>
+/* Headings scale with the screen and never break mid-word ("recommendatio / n" at 360 px). */
+h1 { font-size: clamp(1.85rem, 4.5vw + 0.9rem, 2.75rem) !important; line-height: 1.15 !important;
+     word-break: normal !important; overflow-wrap: normal !important; }
+h2, h3 { word-break: normal !important; overflow-wrap: normal !important; }
+
+/* 16 px inputs: iPhone Safari zooms into any field with smaller text when it's tapped. */
+[data-testid="stNumberInputField"] { font-size: 16px !important; }
+
+/* Captions: darker grey (about 8:1 on white) so they stay readable in sunlight. */
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * { color: #4B5148 !important; opacity: 1 !important; }
+
+/* Touch screens: tap targets of at least 44 x 44 px. */
+@media (pointer: coarse), (max-width: 640px) {
+  button[data-testid^="stBaseButton"] { min-height: 44px; }
+  [data-testid="stNumberInputStepUp"], [data-testid="stNumberInputStepDown"] { min-width: 44px; min-height: 44px; }
+  [data-testid="stNumberInputContainer"], [data-testid="stNumberInputField"] { min-height: 44px; }
+  [data-testid="stTooltipHoverTarget"] { min-width: 44px; min-height: 44px;
+     display: inline-flex !important; align-items: center; justify-content: center; }
+  [data-testid="stSidebarNavLink"], [data-testid="stRadioOption"] { min-height: 44px; align-items: center; }
+  [data-testid="stExpandSidebarButton"], [data-testid="stHeader"] button { min-width: 44px; min-height: 44px; }
+}
+
+/* Phones: input-method options stacked instead of wrapping unevenly. */
+@media (max-width: 640px) {
+  [data-testid="stRadioGroup"] { flex-direction: column !important; align-items: flex-start !important; gap: 0 !important; }
+}
+
+/* Predict page: inputs and result side by side from 1024 px, result kept in view while scrolling. */
+[data-testid="stMainBlockContainer"]:has(.st-key-predict_layout) { max-width: 1240px; }
+@media (min-width: 1024px) {
+  [data-testid="stHorizontalBlock"]:has(.st-key-predict_result) > [data-testid="stColumn"]:has(.st-key-predict_result) {
+    position: sticky; top: 4.5rem; align-self: flex-start; }
+}
+@media (max-width: 1023.98px) {
+  [data-testid="stHorizontalBlock"]:has(.st-key-predict_result) { flex-direction: column !important; }
+  [data-testid="stHorizontalBlock"]:has(.st-key-predict_result) > [data-testid="stColumn"] {
+    width: 100% !important; min-width: 100% !important; flex: 1 1 100% !important; }
+}
+
+/* Phones: crop and yield side by side, the lead on its own line below, so the result stays compact
+   and the chart stays on screen (instead of three tall stacked blocks). Labels wrap, never truncate. */
+@media (max-width: 640px) {
+  :is(.st-key-result_card, .st-key-result_card_stale) [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important; gap: 0.25rem 0.75rem !important; }
+  :is(.st-key-result_card, .st-key-result_card_stale) [data-testid="stColumn"] {
+    min-width: calc(50% - 0.375rem) !important; width: calc(50% - 0.375rem) !important;
+    flex: 1 1 calc(50% - 0.375rem) !important; }
+  :is(.st-key-result_card, .st-key-result_card_stale) [data-testid="stColumn"]:last-child {
+    min-width: 100% !important; width: 100% !important; flex-basis: 100% !important; }
+  :is(.st-key-result_card, .st-key-result_card_stale) [data-testid="stMetricValue"] { font-size: 1.5rem !important; }
+  :is(.st-key-result_card, .st-key-result_card_stale) [data-testid="stMetricLabel"] * {
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+}
+
+/* A result for old inputs is faded until Predict is pressed again. */
+.st-key-result_card_stale { opacity: 0.45; }
+
+/* Home page: crop photos in a 2 x 2 grid on phones instead of four full-width photos. */
+@media (max-width: 640px) {
+  .st-key-crop_grid [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.75rem !important; }
+  .st-key-crop_grid [data-testid="stColumn"] {
+    min-width: calc(50% - 0.375rem) !important; width: calc(50% - 0.375rem) !important;
+    flex: 1 1 calc(50% - 0.375rem) !important; }
+}
+</style>"""
+
+
+def apply_styles():
+    st.html(RESPONSIVE_CSS)
 
 
 def switch_to_manual():

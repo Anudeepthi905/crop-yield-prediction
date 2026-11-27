@@ -38,8 +38,9 @@ with step_3:
     st.caption("See the best crop, its estimated yield, and how all four crops compare.")
 
 st.subheader("Crops covered")
-for column, (name, image, blurb) in zip(st.columns(4), CROPS):
-    with column:
-        st.image(crop_photo(image), width="stretch")
-        st.markdown(f"**{name}**")
-        st.caption(blurb)
+with st.container(key="crop_grid"):   # 4 across on wide screens, 2 x 2 on phones (ui.RESPONSIVE_CSS)
+    for column, (name, image, blurb) in zip(st.columns(4), CROPS):
+        with column:
+            st.image(crop_photo(image), width="stretch")
+            st.markdown(f"**{name}**")
+            st.caption(blurb)

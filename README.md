@@ -4,7 +4,10 @@ Upload a photo of an Indian Soil Health Card and get a crop suggestion (Rice, Ma
 
 **Try it:** https://crop-yield-prediction-npk.streamlit.app/
 
-<!-- SCREENSHOT_TODO: add a screenshot or GIF of the app, e.g. ![App screenshot](assets/screenshot.png) -->
+<p>
+  <img src="docs/screenshots/predict-result-desktop.png" alt="Predict page on a desktop: N, P and K inputs on the left; on the right, the recommended crop (Maize, 29.87) with a chart ranking all four crops" width="70%">
+  <img src="docs/screenshots/predict-result-phone.png" alt="Predict page on a phone, scrolled to the recommendation card after pressing Predict" width="26%">
+</p>
 
 **Tech:** Python · Streamlit · scikit-learn · OpenCV · Tesseract OCR · pandas · pytest
 
@@ -68,7 +71,15 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-The tests cover OCR on every sample card, value parsing and the models, plus the UI with Streamlit's `AppTest`: every page, the empty state, blocked all-zero input, the results card, results surviving reruns, a card being read only once, and friendly recovery when reading or predicting fails. OCR tests are skipped if Tesseract isn't installed.
+The tests cover OCR on every sample card (including enlarged and shrunken images), value parsing and the models, plus the UI with Streamlit's `AppTest`: every page, the empty state, blocked all-zero input, the results card, results surviving reruns, a card being read only once, and friendly recovery when reading or predicting fails. OCR tests are skipped if Tesseract isn't installed.
+
+Browser tests check every page at phone (360 px), tablet (768 px), laptop (1024 px) and desktop (1440 px) widths: no sideways scrolling, no word broken across lines in headings, 16 px inputs, 44 px tap targets on phones, the result scrolled into view on a phone, and two columns from 1024 px. They start the app themselves:
+
+```bash
+playwright install chromium
+pytest -m e2e                       # browser tests
+SAVE_SCREENSHOTS=1 pytest -m e2e    # also refreshes docs/screenshots/
+```
 
 ## UX decisions
 
@@ -80,6 +91,9 @@ The tests cover OCR on every sample card, value parsing and the models, plus the
 - **Results don't vanish.** The last result is kept across reruns, with a note if the inputs change after predicting.
 - **Every state is designed.** Empty, loading, partial-read and error states each have a message; visitors never see a traceback.
 - **Colour has one job.** Brand green marks only the primary action and the winning crop, which is also labelled "(recommended)", so colour is never the only cue.
+- **Phone first, then desktop.** On a phone, the result is scrolled into view and focused after Predict (otherwise it lands below the fold and people press again), the three result numbers stay on one row so the chart stays on screen, inputs use 16 px text so iPhones don't zoom in, tap targets are at least 44 px, and headings scale without breaking words. From 1024 px, inputs and result sit side by side, with the result kept in view while scrolling. The few CSS rules Streamlit needs for this live in one documented block in `ui.py` and are guarded by the browser tests.
+- **Old results fade.** If the inputs change after predicting, the old result is faded under a note, so it can't be mistaken for the current one.
+- **Card reading checks itself.** Each value is read several ways (enlarged image, grid lines removed, and a digits-only re-read of the number) and the readings vote. Across 3 Tesseract models and 3 image sizes this took the reader from 120 to 132 of 135 values right, with no wrong values left, only blanks for the user to type.
 - **Honest units.** The dataset doesn't state the yield unit, so yields are plain numbers; the unit is one constant (`ui.YIELD_UNIT`) if it's ever confirmed.
 
 ## Deploy on Streamlit Community Cloud
@@ -92,7 +106,7 @@ The tests cover OCR on every sample card, value parsing and the models, plus the
 ## Limitations
 
 - **OCR works best on clear, straight-on images of the "Soil Test Results" table.** Blurry, angled or differently laid-out cards may not be read; the app then asks for the values to be typed in.
-- **Small dataset:** each model is trained on about 180 rows of NPK and yield data, and only N, P and K are used (no rainfall, temperature, soil type or region). Predictions are estimates, not agronomic advice.
+- **Small dataset:** each crop has 225 rows of NPK and yield data, and its model trains on 157–180 of them (the rest are held out for testing). Only N, P and K are used (no rainfall, temperature, soil type or region). Predictions are estimates, not agronomic advice.
 - **The yield unit isn't known.** Neither the dataset nor the paper states it, so the app shows yields as plain numbers.
 - **The suggestion compares raw predicted yields across crops.** Crops with naturally higher yield figures (Maize in this data) are suggested for most inputs.
 - English-language cards only.
@@ -108,7 +122,8 @@ data/                   Training data per crop (N, P, K, Yield)
 Images/                 Crop photos on the home page
 samples/                Sample Soil Health Cards for "Try a sample"
 tools/make_sample_cards.py  Generates the three synthetic sample cards
-tests/                  pytest suite
+tests/                  pytest suite (tests/e2e: browser tests at four screen widths)
+docs/screenshots/       Screenshots taken by the browser tests
 .streamlit/config.toml  Theme and upload limit
 packages.txt            System packages for Streamlit Cloud (Tesseract)
 requirements.txt        Python dependencies (pinned)

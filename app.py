@@ -5,9 +5,10 @@ Each page lives in views/ and gets its own URL (/, /predict, /about), so links a
 """
 import streamlit as st
 
-from ui import REPO_URL
+from ui import REPO_URL, apply_styles
 
 st.set_page_config(page_title="Crop Yield Predictor", page_icon=":material/eco:", layout="centered")
+apply_styles()
 
 pages = [
     st.Page("views/home.py", title="Home", icon=":material/home:", default=True),

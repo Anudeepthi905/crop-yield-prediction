@@ -172,12 +172,12 @@ def test_valid_prediction_shows_results_card():
     enter_values(at, 305.0, 36.0, 69.0)
     click(at, "Predict")
     shown = metrics(at)
-    assert shown["Crop"] == "Maize"
+    assert shown["Recommended crop"] == "Maize"
     assert re.fullmatch(r"\d+\.\d{2}", shown["Estimated yield"])  # 2 decimals, no 15-digit float
     assert any(label.startswith("Ahead of ") for label in shown)
     assert any("Based on N 305.00, P 36.00 and K 69.00" in c.value for c in at.caption)
     # Outside the training data (N > 277, K < 78): flagged, not blocked
-    assert any("Outside the training data" in c.value for c in at.caption)
+    assert any("Beyond the training data for N 305" in c.value for c in at.caption)
 
 
 def test_result_survives_reruns_and_flags_changed_inputs(monkeypatch):
@@ -186,9 +186,9 @@ def test_result_survives_reruns_and_flags_changed_inputs(monkeypatch):
     at.radio(key="input_mode").set_value(ui.INPUT_MANUAL).run()
     enter_values(at, 160.0, 20.0, 150.0)
     click(at, "Predict")
-    assert metrics(at)["Crop"] == "Maize"
+    assert metrics(at)["Recommended crop"] == "Maize"
     load_sample(at, "Synthetic card B")   # changes the form values, not the result
-    assert metrics(at)["Crop"] == "Maize"
+    assert metrics(at)["Recommended crop"] == "Maize"
     assert any("changed since this result" in i.value for i in at.info)
 
 
@@ -221,7 +221,7 @@ def test_card_is_read_only_once(monkeypatch):
     load_sample(at, "Synthetic card B")
     click(at, "Predict")                  # a rerun with the same card must not read it again
     assert len(calls) == 1
-    assert metrics(at)["Crop"] == "Rice"
+    assert metrics(at)["Recommended crop"] == "Rice"
 
 
 @needs_tesseract
@@ -233,4 +233,4 @@ def test_try_a_sample_fills_values_and_predicts():
     # The user can correct a value before predicting
     at.number_input(key="npk_P").set_value(18.0)
     click(at, "Predict")
-    assert metrics(at)["Crop"] == "Rice"
+    assert metrics(at)["Recommended crop"] == "Rice"
