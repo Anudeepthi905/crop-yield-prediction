@@ -2,7 +2,8 @@
 
 Upload a photo of an Indian Soil Health Card and get a crop recommendation (Rice, Maize, Groundnut or Redgram) with an estimated yield, based on the soil's Nitrogen, Phosphorus and Potassium (NPK) values.
 
-**Live app:** https://crop-yield-prediction-npk.streamlit.app/ · **Paper:** [Crop Yield Prediction Using Machine Learning Algorithms](https://doi.org/10.36287/setsci.17.1.0040)
+**Live app:** https://crop-yield-prediction-npk.streamlit.app/
+**Paper:** [Crop Yield Prediction Using Machine Learning Algorithms](https://doi.org/10.36287/setsci.17.1.0040)
 
 **Tech:** Python · Streamlit · scikit-learn · OpenCV · Tesseract OCR · pytest · Playwright · GitHub Actions
 
