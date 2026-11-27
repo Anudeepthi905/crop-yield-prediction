@@ -24,14 +24,6 @@ MUTED_COLOR = "#C9CFC6"
 PAPER_URL = "https://doi.org/10.36287/setsci.17.1.0040"
 REPO_URL = "https://github.com/Anudeepthi905/crop-yield-prediction"
 
-ABOUT_NOTE = (
-    "This app reads the **Nitrogen (N), Phosphorus (P) and Potassium (K)** values from a Soil Health Card "
-    "(or takes them typed in), predicts the yield of Rice, Maize, Groundnut and Redgram, and suggests the crop "
-    "with the highest predicted yield.\n\n"
-    "It is an **academic project**: the models were trained on a small dataset, so predictions are "
-    "**estimates only** and not agronomic advice."
-)
-
 INPUT_UPLOAD = "Upload a card"
 INPUT_SAMPLE = "Try a sample"
 INPUT_MANUAL = "Type the values"

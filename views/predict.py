@@ -3,14 +3,14 @@ import streamlit as st
 
 import ui
 from core import ALLOWED_TYPES, MAX_UPLOAD_MB, SAMPLES, SAMPLES_DIR
-from ui import ABOUT_NOTE, INPUT_MANUAL, INPUT_MODES, INPUT_SAMPLE, INPUT_UPLOAD
+from ui import INPUT_MANUAL, INPUT_MODES, INPUT_SAMPLE, INPUT_UPLOAD
 
-st.title("Crop Yield Predictor")
-st.info(ABOUT_NOTE)
+st.title("Get a crop recommendation")
+st.caption("Add your soil's N, P and K values, check them, then press Predict.")
 
 ui.init_state()
 
-st.subheader("1. Provide your soil's N, P and K values")
+st.subheader("1. Add your soil values")
 mode = st.radio("How do you want to add your soil values?", INPUT_MODES, key="input_mode", horizontal=True)
 
 if mode == INPUT_UPLOAD:

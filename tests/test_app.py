@@ -85,7 +85,7 @@ def test_predict_yields_returns_all_crops():
 
 def test_all_referenced_files_exist():
     source = (ROOT / "views" / "home.py").read_text(encoding="utf-8")
-    images = re.findall(r'IMAGES_DIR / "([^"]+)"', source)
+    images = re.findall(r'"(\w+\.jpg)"', source)
     assert images, "expected app.py to reference images"
     for name in images:
         assert (app.IMAGES_DIR / name).is_file(), f"missing image: Images/{name}"
