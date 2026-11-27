@@ -33,3 +33,6 @@ desktop.ini
 
 # Office lock files
 ~$*
+
+# Screenshots from `SAVE_SCREENSHOTS=1 pytest -m e2e`
+docs/screenshots/
