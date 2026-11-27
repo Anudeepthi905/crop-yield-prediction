@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest==9.2.0
+# Browser tests (pytest -m e2e); also run `playwright install chromium` once
+playwright==1.65.2

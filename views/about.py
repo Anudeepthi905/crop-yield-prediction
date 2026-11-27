@@ -17,7 +17,8 @@ st.markdown(
 
 st.subheader("Limitations")
 st.markdown(
-    "- The models were trained on a small dataset (225 samples per crop) using only N, P and K: no weather, "
+    "- The models were trained on a small dataset (225 samples per crop, 157–180 of them used for training) "
+    "using only N, P and K: no weather, "
     "soil type or region.\n"
     "- The dataset doesn't state the yield unit, so yields are shown as plain numbers.\n"
     "- Crops with naturally higher yield figures, especially Maize, are recommended for most inputs.\n"
