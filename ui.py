@@ -4,7 +4,7 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 
-from core import (CROP_MODELS, FEATURES, IMAGES_DIR, OCR_VERSION, PLAUSIBLE_RANGE, load_training_data, predict_yields,
+from core import (CROP_MODELS, FEATURES, OCR_VERSION, PLAUSIBLE_RANGE, load_training_data, predict_yields,
                   read_npk_from_bytes)
 
 NUTRIENTS = {"N": "Nitrogen", "P": "Phosphorus", "K": "Potassium"}
@@ -331,7 +331,6 @@ MENU_JS = """<script>
 def apply_styles():
     st.html(RESPONSIVE_CSS + MENU_CSS)
     st.html(MENU_JS, unsafe_allow_javascript=True)
-    st.logo(str(IMAGES_DIR / "logo.svg"), icon_image=str(IMAGES_DIR / "logo-mark.svg"), size="large")
 
 
 def switch_to_manual():
