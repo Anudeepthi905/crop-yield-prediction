@@ -90,6 +90,20 @@ def test_parse_npk(text, expected):
     assert app.parse_npk(text) == expected
 
 
+def test_new_reader_version_is_not_served_old_cached_readings(monkeypatch):
+    """st.cache_data ignores changes in called functions, so the reader version must be in the cache key."""
+    calls = []
+    monkeypatch.setattr(app, "read_npk", lambda img: calls.append(1) or {"K": 69.0})
+    image = cv2.imencode(".png", np.full((20, 20, 3), 255, dtype=np.uint8))[1].tobytes()
+    app.read_npk_from_bytes.clear()
+    app.read_npk_from_bytes(image, -1)
+    app.read_npk_from_bytes(image, -1)        # same image, same version: served from the cache
+    assert len(calls) == 1
+    app.read_npk_from_bytes(image, -2)        # new reader version: read again
+    assert len(calls) == 2
+    app.read_npk_from_bytes.clear()
+
+
 def test_unreadable_bytes_return_none():
     assert app.read_npk_from_bytes(b"this is not an image") is None
 
@@ -181,7 +195,7 @@ def test_valid_prediction_shows_results_card():
 
 
 def test_result_survives_reruns_and_flags_changed_inputs(monkeypatch):
-    monkeypatch.setattr(ui, "read_npk_from_bytes", lambda image_bytes: {"N": 200.0, "P": 8.0, "K": 280.0})
+    monkeypatch.setattr(ui, "read_npk_from_bytes", lambda image_bytes, reader_version=None: {"N": 200.0, "P": 8.0, "K": 280.0})
     at = predict_page()
     at.radio(key="input_mode").set_value(ui.INPUT_MANUAL).run()
     enter_values(at, 160.0, 20.0, 150.0)
@@ -205,7 +219,7 @@ def test_prediction_failure_shows_friendly_error(monkeypatch):
 
 
 def test_ocr_failure_shows_recovery_button(monkeypatch):
-    monkeypatch.setattr(ui, "read_npk_from_bytes", lambda image_bytes: {})
+    monkeypatch.setattr(ui, "read_npk_from_bytes", lambda image_bytes, reader_version=None: {})
     at = predict_page()
     load_sample(at, "Synthetic card A")
     assert "couldn't find N, P and K" in at.error[0].value
@@ -216,7 +230,7 @@ def test_ocr_failure_shows_recovery_button(monkeypatch):
 def test_card_is_read_only_once(monkeypatch):
     calls = []
     monkeypatch.setattr(ui, "read_npk_from_bytes",
-                        lambda image_bytes: calls.append(1) or {"N": 200.0, "P": 8.0, "K": 280.0})
+                        lambda image_bytes, reader_version=None: calls.append(1) or {"N": 200.0, "P": 8.0, "K": 280.0})
     at = predict_page()
     load_sample(at, "Synthetic card B")
     click(at, "Predict")                  # a rerun with the same card must not read it again

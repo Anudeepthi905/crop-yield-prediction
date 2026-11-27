@@ -4,7 +4,8 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 
-from core import CROP_MODELS, FEATURES, PLAUSIBLE_RANGE, load_training_data, predict_yields, read_npk_from_bytes
+from core import (CROP_MODELS, FEATURES, OCR_VERSION, PLAUSIBLE_RANGE, load_training_data, predict_yields,
+                  read_npk_from_bytes)
 
 NUTRIENTS = {"N": "Nitrogen", "P": "Phosphorus", "K": "Potassium"}
 FIELD_KEY = {key: f"npk_{key}" for key in NUTRIENTS}
@@ -295,7 +296,7 @@ def read_card(image_bytes, source_id, caption):
 def _run_ocr(image_bytes, source_id):
     found, problem = {}, None
     try:
-        result = read_npk_from_bytes(image_bytes)
+        result = read_npk_from_bytes(image_bytes, OCR_VERSION)
     except pytesseract.TesseractNotFoundError:
         problem = "no_ocr"
     except Exception:  # noqa: BLE001 - any OCR failure becomes a friendly message
