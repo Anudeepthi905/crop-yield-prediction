@@ -300,9 +300,18 @@ def extract_npk_from_image(img):
     return (found["N"], found["P"], found["K"]) if len(found) == 3 else None
 
 
+# Part of the cache key below. Bump it whenever the reader changes: st.cache_data keys on this function's
+# own code and arguments, not on the functions it calls, so without a bump a running app keeps serving
+# readings made by the old reader (which is how the live app kept showing K 65.00 after the fix).
+OCR_VERSION = 3
+
+
 @st.cache_data(show_spinner=False, max_entries=50)
-def read_npk_from_bytes(image_bytes):
-    """Decode image bytes and OCR them. Returns None if the bytes are not a readable image."""
+def read_npk_from_bytes(image_bytes, reader_version=OCR_VERSION):
+    """Decode image bytes and OCR them. Returns None if the bytes are not a readable image.
+
+    `reader_version` only keys the cache; pass OCR_VERSION.
+    """
     img = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         return None
